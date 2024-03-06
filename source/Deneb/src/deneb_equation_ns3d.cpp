@@ -388,6 +388,7 @@ void EquationNS3D::ComputeLocalTimestep(const double* solution,
     local_timestep[icell] =
         cell_volumes[icell] /
         ((std::abs(du) * d_inv + a) * Vx + (std::abs(dv) * d_inv + a) * Vy +
+         (std::abs(dw) * d_inv + a) * Vz +
          (d_inv * max_visradii + AVcoeff) * dt_auxiliary_[icell]);
   }
   avocado::VecScale(num_cells, 1.0 / static_cast<double>(2 * order + 1),
@@ -1678,7 +1679,7 @@ void EquationNS3D::ComputeNumFluxJacobiRoe(const int num_points,
       GET_SOLUTION_GRAD_PDS(_o, owner_div_u);
 
       COMPUTE_FLUX_BASICS(_o);
-      const double V_o = u_o * nx + v_o * ny;
+      const double V_o = u_o * nx + v_o * ny + w_o * nz;
       const double dsqrt_o = std::sqrt(d_o);
       const double dsqrt_inv_o = 1.0 / dsqrt_o;
       {
@@ -1844,6 +1845,8 @@ std::shared_ptr<BoundaryNS3D> BoundaryNS3D::GetBoundary(
     const std::string& type, const int bdry_tag, EquationNS3D* equation) {
   if (!type.compare("AdiabaticWall"))
     return std::make_shared<AdiabaticWallNS3D>(bdry_tag, equation);
+  else if (!type.compare("SlipWall"))
+    return std::make_shared<SlipWallNS3D>(bdry_tag, equation);
   else if (!type.compare("Riemann"))
     return std::make_shared<RiemannNS3D>(bdry_tag, equation);
   ERROR_MESSAGE("Wrong boundary condition (no-exist):" + type + "\n");
@@ -2031,6 +2034,210 @@ void AdiabaticWallNS3D::ComputeBdryFluxJacobi(
     }
   }
 }
+// Boundary = SlipWall
+// Dependency: -
+SlipWallNS3D::SlipWallNS3D(const int bdry_tag, EquationNS3D* equation)
+    : BoundaryNS3D(bdry_tag, equation) {
+  MASTER_MESSAGE("SlipWall (tag=" + std::to_string(bdry_tag) + ")\n");
+}
+void SlipWallNS3D::ComputeBdrySolution(
+    const int num_points, std::vector<double>& bdry_u,
+    std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
+    const std::vector<double>& owner_div_u, const std::vector<double>& normal,
+    const std::vector<double>& coords, const double& time) {
+  int ind = 0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    GET_SOLUTION_PS(, owner_u);
+    const double dV = du * nx + dv * ny + dw * nz;
+
+    // ps
+    ind = S_ * ipoint;
+    bdry_u[ind++] = d;
+    bdry_u[ind++] = du - dV * nx;
+    bdry_u[ind++] = dv - dV * ny;
+    bdry_u[ind++] = dw - dV * nz;
+    bdry_u[ind] = dE - 0.5 * dV * dV / d;
+  }
+  // Don't touch bdry_div_u.
+}
+void SlipWallNS3D::ComputeBdryFlux(const int num_points,
+                                   std::vector<double>& flux, FACE_INPUTS,
+                                   const std::vector<double>& coords,
+                                   const double& time) {
+  int ind = 0;
+  double AVcoeff = 0.0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_SOLUTION_PS(, owner_u);
+
+    GET_SOLUTION_GRAD_PDS(, owner_div_u);
+
+    COMPUTE_FLUX_BASICS();
+
+    // pds
+    ind = DS_ * ipoint;
+    AVcoeff = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(
+        owner_cell, ipoint);
+    flux[ind++] = 0.0;
+    flux[ind++] = p - alpha_ * txx;
+    flux[ind++] = -alpha_ * txy;
+    flux[ind++] = -alpha_ * txz;
+    flux[ind++] = 0.0;
+
+    flux[ind++] = 0.0;
+    flux[ind++] = -alpha_ * txy;
+    flux[ind++] = p - alpha_ * tyy;
+    flux[ind++] = -alpha_ * tyz;
+    flux[ind++] = 0.0;
+
+    flux[ind++] = 0.0;
+    flux[ind++] = -alpha_ * txz;
+    flux[ind++] = -alpha_ * tyz;
+    flux[ind++] = p - alpha_ * tzz;
+    flux[ind] = 0.0;
+  }
+}
+void SlipWallNS3D::ComputeBdrySolutionJacobi(
+    const int num_points, double* bdry_u_jacobi,
+    const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
+    const std::vector<double>& normal, const std::vector<double>& coords,
+    const double& time) {
+  int ind = 0;
+  memset(bdry_u_jacobi, 0, num_points * SS_ * sizeof(double));
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    GET_SOLUTION_PS(, owner_u);
+    const double V = (du * nx + dv * ny + dw * nz) / d;
+
+    ind = SS_ * ipoint;
+    bdry_u_jacobi[ind++] = 1.0;
+    ind += S_;
+    bdry_u_jacobi[ind++] = 1.0 - nx * nx;
+    bdry_u_jacobi[ind++] = -nx * ny;
+    bdry_u_jacobi[ind++] = -nx * nz;
+    ind += 2;
+    bdry_u_jacobi[ind++] = -nx * ny;
+    bdry_u_jacobi[ind++] = 1.0 - ny * ny;
+    bdry_u_jacobi[ind++] = -ny * nz;
+    ind += 2;
+    bdry_u_jacobi[ind++] = -nx * nz;
+    bdry_u_jacobi[ind++] = -ny * nz;
+    bdry_u_jacobi[ind++] = 1.0 - nz * nz;
+    ind += 1;
+    bdry_u_jacobi[ind++] = 0.5 * V * V;
+    bdry_u_jacobi[ind++] = -V * nx;
+    bdry_u_jacobi[ind++] = -V * ny;
+    bdry_u_jacobi[ind++] = -V * nz;
+    bdry_u_jacobi[ind] = 1.0;
+  }
+}
+void SlipWallNS3D::ComputeBdryFluxJacobi(const int num_points,
+                                         std::vector<double>& flux_jacobi,
+                                         std::vector<double>& flux_grad_jacobi,
+                                         FACE_INPUTS,
+                                         const std::vector<double>& coords,
+                                         const double& time) {
+  // flux_jacobi(ds1s2) = F(ds1) over U(s2)
+  // flux_grad_jacobi(d1s1 s2d2) = F(d1s1) over gradU(d2s2)
+  int ind = 0;
+  double AVcoeff = 0.0;
+  std::vector<Dual<S_>> flux1(DS_);
+  std::vector<Dual<DS_>> flux2(DS_);
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    AVcoeff = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(
+        owner_cell, ipoint);
+    {
+      // ps
+      ind = S_ * ipoint;
+      const Dual<S_> d(owner_u[ind++], 0);
+      const Dual<S_> du(owner_u[ind++], 1);
+      const Dual<S_> dv(owner_u[ind++], 2);
+      const Dual<S_> dw(owner_u[ind++], 3);
+      const Dual<S_> dE(owner_u[ind], 4);
+
+      GET_SOLUTION_GRAD_PDS(, owner_div_u);
+
+      COMPUTE_FLUX_BASICS();
+
+      // pds
+      flux1[0] = 0.0;
+      flux1[1] = p - alpha_ * txx;
+      flux1[2] = -alpha_ * txy;
+      flux1[3] = -alpha_ * txz;
+      flux1[4] = 0.0;
+
+      flux1[5] = 0.0;
+      flux1[6] = -alpha_ * txy;
+      flux1[7] = p - alpha_ * tyy;
+      flux1[8] = -alpha_ * tyz;
+      flux1[9] = 0.0;
+
+      flux1[10] = 0.0;
+      flux1[11] = -alpha_ * txz;
+      flux1[12] = -alpha_ * tyz;
+      flux1[13] = p - alpha_ * tzz;
+      flux1[14] = 0.0;
+
+      // pdss
+      ind = DSS_ * ipoint;
+      for (int ds = 0; ds < DS_; ds++)
+        for (int istate = 0; istate < S_; istate++)
+          flux_jacobi[ind++] = flux1[ds].df[istate];
+    }
+    {
+      GET_SOLUTION_PS(, owner_u);
+
+      // pds over psd
+      ind = DS_ * ipoint;
+      const Dual<DS_> dx(owner_div_u[ind++], 0);
+      const Dual<DS_> dux(owner_div_u[ind++], 3);
+      const Dual<DS_> dvx(owner_div_u[ind++], 6);
+      const Dual<DS_> dwx(owner_div_u[ind++], 9);
+      const Dual<DS_> dEx(owner_div_u[ind++], 12);
+      const Dual<DS_> dy(owner_div_u[ind++], 1);
+      const Dual<DS_> duy(owner_div_u[ind++], 4);
+      const Dual<DS_> dvy(owner_div_u[ind++], 7);
+      const Dual<DS_> dwy(owner_div_u[ind++], 10);
+      const Dual<DS_> dEy(owner_div_u[ind++], 13);
+      const Dual<DS_> dz(owner_div_u[ind++], 2);
+      const Dual<DS_> duz(owner_div_u[ind++], 5);
+      const Dual<DS_> dvz(owner_div_u[ind++], 8);
+      const Dual<DS_> dwz(owner_div_u[ind++], 11);
+      const Dual<DS_> dEz(owner_div_u[ind], 14);
+
+      COMPUTE_FLUX_BASICS();
+
+      // pds
+      flux2[0] = 0.0;
+      flux2[1] = p - alpha_ * txx;
+      flux2[2] = -alpha_ * txy;
+      flux2[3] = -alpha_ * txz;
+      flux2[4] = 0.0;
+
+      flux2[5] = 0.0;
+      flux2[6] = -alpha_ * txy;
+      flux2[7] = p - alpha_ * tyy;
+      flux2[8] = -alpha_ * tyz;
+      flux2[9] = 0.0;
+
+      flux2[10] = 0.0;
+      flux2[11] = -alpha_ * txz;
+      flux2[12] = -alpha_ * tyz;
+      flux2[13] = p - alpha_ * tzz;
+      flux2[14] = 0.0;
+
+      // pdssd
+      ind = DDSS_ * ipoint;
+      for (int ds = 0; ds < DS_; ds++)
+        for (int sd = 0; sd < DS_; sd++)
+          flux_grad_jacobi[ind++] = flux2[ds].df[sd];
+    }
+  }
+}
 // Boundary = Riemann
 // Dependency: Ma, AOA, sideslip
 RiemannNS3D::RiemannNS3D(const int bdry_tag, EquationNS3D* equation)
@@ -2075,7 +2282,7 @@ void RiemannNS3D::ComputeBdrySolution(
     double d_temp = 0.0;
     double u_temp = 0.0;
     double v_temp = 0.0;
-    double w_temp = 0;
+    double w_temp = 0.0;
     double p_temp = 0.0;
     if (std::abs(Vf) >= 1.0) {
       if (V >= 0.0) {
@@ -2339,12 +2546,18 @@ void DoubleSineNS3D::Problem(const int num_points,
 // ProblemInput = -
 TaylorGreenVortexNS3D::TaylorGreenVortexNS3D() {
   MASTER_MESSAGE("TaylorGreenVortex problem\n");
+  
+  auto& config = AVOCADO_CONFIG;
+  Ma_ = std::stod(config->GetConfigValue(PROBLEM_INPUT_I(0)));
+
+  std::stringstream str;
+  str << "\tInput:\n";
+  str << "\t\tMach number = " << Ma_ << "\n";
 }
 void TaylorGreenVortexNS3D::Problem(const int num_points,
                                     std::vector<double>& solutions,
                                     const std::vector<double>& coord,
                                     const double time) const {
-  const double M = 0.1;
   std::vector<double> values(S_);
 
   int ind = 0;
@@ -2353,12 +2566,12 @@ void TaylorGreenVortexNS3D::Problem(const int num_points,
     const double& y = coord[ipoint * D_ + 1];
     const double& z = coord[ipoint * D_ + 2];
 
-    const double p = r_inv_ + 0.0625 * M * M *
+    const double p = r_inv_ + 0.0625 * Ma_ * Ma_ *
                                   (std::cos(2.0 * x) + std::cos(2.0 * y)) *
                                   (std::cos(2.0 * z) + 2.0);
     values[0] = r_ * p;
-    values[1] = M * std::sin(x) * std::cos(y) * std::cos(z);
-    values[2] = -M * std::cos(x) * std::sin(y) * std::cos(z);
+    values[1] = Ma_ * std::sin(x) * std::cos(y) * std::cos(z);
+    values[2] = -Ma_ * std::cos(x) * std::sin(y) * std::cos(z);
     values[3] = 0.0;
     values[4] = p;
 

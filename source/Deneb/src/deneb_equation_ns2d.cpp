@@ -1702,10 +1702,16 @@ std::shared_ptr<BoundaryNS2D> BoundaryNS2D::GetBoundary(
     const std::string& type, const int bdry_tag, EquationNS2D* equation) {
   if (!type.compare("AdiabaticWall"))
     return std::make_shared<AdiabaticWallNS2D>(bdry_tag, equation);
+  else if (!type.compare("SlipWall"))
+    return std::make_shared<SlipWallNS2D>(bdry_tag, equation);
   else if (!type.compare("Riemann"))
     return std::make_shared<RiemannNS2D>(bdry_tag, equation);
   else if (!type.compare("Constant"))
     return std::make_shared<ConstantBdryNS2D>(bdry_tag, equation);
+  else if (!type.compare("SupersonicInflow"))
+    return std::make_shared<SupersonicInflowBdryNS2D>(bdry_tag, equation);
+  else if (!type.compare("BackPressure"))
+    return std::make_shared<BackPressureBdryNS2D>(bdry_tag, equation);
   ERROR_MESSAGE("Wrong boundary condition (no-exist):" + type + "\n");
   return nullptr;
 }
@@ -1750,15 +1756,15 @@ void AdiabaticWallNS2D::ComputeBdryFlux(const int num_points,
     ind = DS_ * ipoint;
     AVcoeff = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(
         owner_cell, ipoint);
-    flux[ind++] = -AVcoeff * dx;
-    flux[ind++] = p - alpha_ * txx - AVcoeff * dux;
-    flux[ind++] = -alpha_ * txy - AVcoeff * dvx;
-    flux[ind++] = -AVcoeff * dEx;
+    flux[ind++] = 0.0;
+    flux[ind++] = p - alpha_ * txx;
+    flux[ind++] = -alpha_ * txy;
+    flux[ind++] = 0.0;
 
-    flux[ind++] = -AVcoeff * dy;
-    flux[ind++] = -alpha_ * txy - AVcoeff * duy;
-    flux[ind++] = p - alpha_ * tyy - AVcoeff * dvy;
-    flux[ind] = -AVcoeff * dEy;
+    flux[ind++] = 0.0;
+    flux[ind++] = -alpha_ * txy;
+    flux[ind++] = p - alpha_ * tyy;
+    flux[ind] = 0.0;
   }
 }
 void AdiabaticWallNS2D::ComputeBdrySolutionJacobi(
@@ -1810,14 +1816,14 @@ void AdiabaticWallNS2D::ComputeBdryFluxJacobi(
       COMPUTE_FLUX_BASICS();
 
       // pds
-      flux1[0] = -AVcoeff * dx;
-      flux1[1] = p - alpha_ * txx - AVcoeff * dux;
-      flux1[2] = -alpha_ * txy - AVcoeff * dvx;
-      flux1[3] = -AVcoeff * dEx;
-      flux1[4] = -AVcoeff * dy;
-      flux1[5] = -alpha_ * txy - AVcoeff * duy;
-      flux1[6] = p - alpha_ * tyy - AVcoeff * dvy;
-      flux1[7] = -AVcoeff * dEy;
+      flux1[0] = 0.0;
+      flux1[1] = p - alpha_ * txx;
+      flux1[2] = -alpha_ * txy;
+      flux1[3] = 0.0;
+      flux1[4] = 0.0;
+      flux1[5] = -alpha_ * txy;
+      flux1[6] = p - alpha_ * tyy;
+      flux1[7] = 0.0;
 
       // pdss
       ind = DSS_ * ipoint;
@@ -1842,14 +1848,174 @@ void AdiabaticWallNS2D::ComputeBdryFluxJacobi(
       COMPUTE_FLUX_BASICS();
 
       // pds
-      flux2[0] = -AVcoeff * dx;
-      flux2[1] = p - alpha_ * txx - AVcoeff * dux;
-      flux2[2] = -alpha_ * txy - AVcoeff * dvx;
-      flux2[3] = -AVcoeff * dEx;
-      flux2[4] = -AVcoeff * dy;
-      flux2[5] = -alpha_ * txy - AVcoeff * duy;
-      flux2[6] = p - alpha_ * tyy - AVcoeff * dvy;
-      flux2[7] = -AVcoeff * dEy;
+      flux2[0] = 0.0;
+      flux2[1] = p - alpha_ * txx;
+      flux2[2] = -alpha_ * txy;
+      flux2[3] = 0.0;
+      flux2[4] = 0.0;
+      flux2[5] = -alpha_ * txy;
+      flux2[6] = p - alpha_ * tyy;
+      flux2[7] = 0.0;
+
+      // pdssd
+      ind = DDSS_ * ipoint;
+      for (int ds = 0; ds < DS_; ds++)
+        for (int sd = 0; sd < DS_; sd++)
+          flux_grad_jacobi[ind++] = flux2[ds].df[sd];
+    }
+  }
+}
+// Boundary = SlipWall
+// Dependency: -
+SlipWallNS2D::SlipWallNS2D(const int bdry_tag, EquationNS2D* equation)
+    : BoundaryNS2D(bdry_tag, equation) {
+  MASTER_MESSAGE("SlipWall (tag=" + std::to_string(bdry_tag) + ")\n");
+}
+void SlipWallNS2D::ComputeBdrySolution(
+    const int num_points, std::vector<double>& bdry_u,
+    std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
+    const std::vector<double>& owner_div_u, const std::vector<double>& normal,
+    const std::vector<double>& coords, const double& time) {
+  int ind = 0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    GET_SOLUTION_PS(, owner_u);
+    const double dV = du * nx + dv * ny;
+
+    // ps
+    ind = S_ * ipoint;
+    bdry_u[ind++] = d;
+    bdry_u[ind++] = du - dV * nx;
+    bdry_u[ind++] = dv - dV * ny;
+    bdry_u[ind] = dE - 0.5 * dV * dV / d;
+  }
+  // Don't touch bdry_div_u.
+}
+void SlipWallNS2D::ComputeBdryFlux(const int num_points,
+                                        std::vector<double>& flux, FACE_INPUTS,
+                                        const std::vector<double>& coords,
+                                        const double& time) {
+  int ind = 0;
+  double AVcoeff = 0.0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_SOLUTION_PS(, owner_u);
+
+    GET_SOLUTION_GRAD_PDS(, owner_div_u);
+
+    COMPUTE_FLUX_BASICS();
+
+    // pds
+    ind = DS_ * ipoint;
+    AVcoeff = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(
+        owner_cell, ipoint);
+    flux[ind++] = 0.0;
+    flux[ind++] = p - alpha_ * txx;
+    flux[ind++] = -alpha_ * txy;
+    flux[ind++] = 0.0;
+
+    flux[ind++] = 0.0;
+    flux[ind++] = -alpha_ * txy;
+    flux[ind++] = p - alpha_ * tyy;
+    flux[ind] = 0.0;
+  }
+}
+void SlipWallNS2D::ComputeBdrySolutionJacobi(
+    const int num_points, double* bdry_u_jacobi,
+    const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
+    const std::vector<double>& normal, const std::vector<double>& coords,
+    const double& time) {
+  int ind = 0;
+  memset(bdry_u_jacobi, 0, num_points * SS_ * sizeof(double));
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    GET_SOLUTION_PS(, owner_u);
+    const double V = (du * nx + dv * ny) / d;
+
+    ind = SS_ * ipoint;
+    bdry_u_jacobi[ind++] = 1.0;
+    ind += S_;
+    bdry_u_jacobi[ind++] = 1.0 - nx * nx;
+    bdry_u_jacobi[ind++] = -nx * ny;
+    ind += S_ - 2;
+    bdry_u_jacobi[ind++] = -nx * ny;
+    bdry_u_jacobi[ind++] = 1.0 - ny * ny;
+    ind += S_ - 3;
+    bdry_u_jacobi[ind++] = 0.5 * V * V;
+    bdry_u_jacobi[ind++] = -V * nx;
+    bdry_u_jacobi[ind++] = -V * ny;
+    bdry_u_jacobi[ind] = 1.0;
+  }
+}
+void SlipWallNS2D::ComputeBdryFluxJacobi(
+    const int num_points, std::vector<double>& flux_jacobi,
+    std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
+    const std::vector<double>& coords, const double& time) {
+  // flux_jacobi(ds1s2) = F(ds1) over U(s2)
+  // flux_grad_jacobi(d1s1 s2d2) = F(d1s1) over gradU(d2s2)
+  int ind = 0;
+  double AVcoeff = 0.0;
+  std::vector<Dual<S_>> flux1(DS_);
+  std::vector<Dual<DS_>> flux2(DS_);
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    AVcoeff = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(
+        owner_cell, ipoint);
+    {
+      // ps
+      ind = S_ * ipoint;
+      const Dual<S_> d(owner_u[ind++], 0);
+      const Dual<S_> du(owner_u[ind++], 1);
+      const Dual<S_> dv(owner_u[ind++], 2);
+      const Dual<S_> dE(owner_u[ind], 3);
+
+      GET_SOLUTION_GRAD_PDS(, owner_div_u);
+
+      COMPUTE_FLUX_BASICS();
+
+      // pds
+      flux1[0] = 0.0;
+      flux1[1] = p - alpha_ * txx;
+      flux1[2] = -alpha_ * txy;
+      flux1[3] = 0.0;
+      flux1[4] = 0.0;
+      flux1[5] = -alpha_ * txy;
+      flux1[6] = p - alpha_ * tyy;
+      flux1[7] = 0.0;
+
+      // pdss
+      ind = DSS_ * ipoint;
+      for (int ds = 0; ds < DS_; ds++)
+        for (int istate = 0; istate < S_; istate++)
+          flux_jacobi[ind++] = flux1[ds].df[istate];
+    }
+    {
+      GET_SOLUTION_PS(, owner_u);
+
+      // pds over psd
+      ind = DS_ * ipoint;
+      const Dual<DS_> dx(owner_div_u[ind++], 0);
+      const Dual<DS_> dux(owner_div_u[ind++], 2);
+      const Dual<DS_> dvx(owner_div_u[ind++], 4);
+      const Dual<DS_> dEx(owner_div_u[ind++], 6);
+      const Dual<DS_> dy(owner_div_u[ind++], 1);
+      const Dual<DS_> duy(owner_div_u[ind++], 3);
+      const Dual<DS_> dvy(owner_div_u[ind++], 5);
+      const Dual<DS_> dEy(owner_div_u[ind], 7);
+
+      COMPUTE_FLUX_BASICS();
+
+      // pds
+      flux2[0] = 0.0;
+      flux2[1] = p - alpha_ * txx;
+      flux2[2] = -alpha_ * txy;
+      flux2[3] = 0.0;
+      flux2[4] = 0.0;
+      flux2[5] = -alpha_ * txy;
+      flux2[6] = p - alpha_ * tyy;
+      flux2[7] = 0.0;
 
       // pdssd
       ind = DDSS_ * ipoint;
@@ -2058,8 +2224,7 @@ void RiemannNS2D::ComputeBdryFluxJacobi(const int num_points,
 // Boundary = Constant
 // Dependency: BdryInput(num)
 // BdryInput(num) = rho, rhoU, rhoV, rhoE
-ConstantBdryNS2D::ConstantBdryNS2D(const int bdry_tag,
-                                         EquationNS2D* equation)
+ConstantBdryNS2D::ConstantBdryNS2D(const int bdry_tag, EquationNS2D* equation)
     : BoundaryNS2D(bdry_tag, equation) {
   MASTER_MESSAGE("Constant boundary (tag=" + std::to_string(bdry_tag) + ")\n");
 
@@ -2085,10 +2250,9 @@ void ConstantBdryNS2D::ComputeBdrySolution(
     for (int istate = 0; istate < S_; istate++) bdry_u[ind++] = values_[istate];
 }
 void ConstantBdryNS2D::ComputeBdryFlux(const int num_points,
-                                          std::vector<double>& flux,
-                                          FACE_INPUTS,
-                                          const std::vector<double>& coords,
-                                          const double& time) {
+                                       std::vector<double>& flux, FACE_INPUTS,
+                                       const std::vector<double>& coords,
+                                       const double& time) {
   equation_->ComputeNumFlux(num_points, flux, owner_cell, neighbor_cell,
                             owner_u, owner_div_u, neighbor_u, neighbor_div_u,
                             normal);
@@ -2106,7 +2270,241 @@ void ConstantBdryNS2D::ComputeBdryFluxJacobi(
     const std::vector<double>& coords, const double& time) {
   static const int max_num_bdry_points = equation_->GetMaxNumBdryPoints();
   static std::vector<double> flux_neighbor_jacobi(max_num_bdry_points * DSS_);
-  static std::vector<double> flux_neighbor_grad_jacobi;  // dummy
+  static std::vector<double> flux_neighbor_grad_jacobi(max_num_bdry_points *
+                                                       DDSS_);
+  static std::vector<double> bdry_u_jacobi(max_num_bdry_points * SS_);
+
+  equation_->ComputeNumFluxJacobi(num_points, flux_jacobi, flux_neighbor_jacobi,
+                                  flux_grad_jacobi, flux_neighbor_grad_jacobi,
+                                  owner_cell, -1, owner_u, owner_div_u,
+                                  neighbor_u, neighbor_div_u, normal);
+  ComputeBdrySolutionJacobi(num_points, &bdry_u_jacobi[0], owner_u, owner_div_u,
+                            normal, coords, time);
+
+  for (int ipoint = 0; ipoint < num_points; ipoint++)
+    gemmAB(1.0, &flux_neighbor_jacobi[ipoint * DSS_],
+           &bdry_u_jacobi[ipoint * SS_], 1.0, &flux_jacobi[ipoint * DSS_], DS_,
+           S_, S_);
+}
+// Boundary = SupersonicInflow
+// Dependency: BdryInput(num)
+// BdryInput(num) = rho, p/pinf, AoA
+SupersonicInflowBdryNS2D::SupersonicInflowBdryNS2D(const int bdry_tag,
+                                                   EquationNS2D* equation)
+    : BoundaryNS2D(bdry_tag, equation) {
+  MASTER_MESSAGE("SupersonicInflow boundary (tag=" + std::to_string(bdry_tag) +
+                 ")\n");
+
+  auto& config = AVOCADO_CONFIG;
+  Ma_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 0)));
+  rho_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 1)));
+  p_over_pinf_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 2)));
+  AoA_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 3)));
+
+  MASTER_MESSAGE("SupersonicInflow (tag=" + std::to_string(bdry_tag) +
+                 ")\n\tMa = " + std::to_string(Ma_) +
+                 ")\n\trho = " + std::to_string(rho_) +
+                 ")\n\tp/pinf = " + std::to_string(p_over_pinf_) +
+                 "\n\tAOA = " + std::to_string(AoA_) + "\n");
+
+  uf_ = Ma_ * std::cos(AoA_ * pi_ / 180.0);
+  vf_ = Ma_ * std::sin(AoA_ * pi_ / 180.0);
+}
+void SupersonicInflowBdryNS2D::ComputeBdrySolution(
+    const int num_points, std::vector<double>& bdry_u,
+    std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
+    const std::vector<double>& owner_div_u, const std::vector<double>& normal,
+    const std::vector<double>& coords, const double& time) {
+  static const double p = p_over_pinf_ * r_inv_;
+  int ind = 0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    // ps
+    ind = S_ * ipoint;
+    bdry_u[ind++] = rho_;
+    bdry_u[ind++] = rho_ * uf_;
+    bdry_u[ind++] = rho_ * vf_;
+    bdry_u[ind] = rm1_inv_ * p + 0.5 * rho_ * (uf_ * uf_ + vf_ * vf_);
+  }
+}
+void SupersonicInflowBdryNS2D::ComputeBdryFlux(
+    const int num_points, std::vector<double>& flux, FACE_INPUTS,
+    const std::vector<double>& coords, const double& time) {
+  const double pb = p_over_pinf_ * r_inv_;
+  const double dEb = pb * rm1_inv_ + 0.5 * rho_ * (uf_ * uf_ + vf_ * vf_);
+  int ind = 0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    // pds
+    ind = DS_ * ipoint;
+    flux[ind++] = rho_ * uf_;
+    flux[ind++] = rho_ * uf_ * uf_ + pb;
+    flux[ind++] = rho_ * uf_ * vf_;
+    flux[ind++] = (dEb + pb) * uf_;
+
+    flux[ind++] = rho_ * vf_;
+    flux[ind++] = rho_ * vf_ * uf_;
+    flux[ind++] = rho_ * vf_ * vf_ + pb;
+    flux[ind] = (dEb + pb) * vf_;
+  }
+}
+void SupersonicInflowBdryNS2D::ComputeBdrySolutionJacobi(
+    const int num_points, double* bdry_u_jacobi,
+    const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
+    const std::vector<double>& normal, const std::vector<double>& coords,
+    const double& time) {
+  memset(bdry_u_jacobi, 0, num_points * SS_ * sizeof(double));
+}
+void SupersonicInflowBdryNS2D::ComputeBdryFluxJacobi(
+    const int num_points, std::vector<double>& flux_jacobi,
+    std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
+    const std::vector<double>& coords, const double& time) {
+  static const int max_num_bdry_points = equation_->GetMaxNumBdryPoints();
+  static std::vector<double> flux_neighbor_jacobi(max_num_bdry_points * DSS_);
+  static std::vector<double> flux_neighbor_grad_jacobi(max_num_bdry_points *
+                                                       DDSS_);
+  static std::vector<double> bdry_u_jacobi(max_num_bdry_points * SS_);
+
+  equation_->ComputeNumFluxJacobi(num_points, flux_jacobi, flux_neighbor_jacobi,
+                                  flux_grad_jacobi, flux_neighbor_grad_jacobi,
+                                  owner_cell, -1, owner_u, owner_div_u,
+                                  neighbor_u, neighbor_div_u, normal);
+  ComputeBdrySolutionJacobi(num_points, &bdry_u_jacobi[0], owner_u, owner_div_u,
+                            normal, coords, time);
+
+  for (int ipoint = 0; ipoint < num_points; ipoint++)
+    gemmAB(1.0, &flux_neighbor_jacobi[ipoint * DSS_],
+           &bdry_u_jacobi[ipoint * SS_], 1.0, &flux_jacobi[ipoint * DSS_], DS_,
+           S_, S_);
+}
+// Boundary = BackPressure
+// Dependency: BdryInput(num)
+// BdryInput(num) = p/pinf
+BackPressureBdryNS2D::BackPressureBdryNS2D(const int bdry_tag,
+                                              EquationNS2D* equation)
+    : BoundaryNS2D(bdry_tag, equation) {
+  MASTER_MESSAGE("BackPressure boundary (tag=" + std::to_string(bdry_tag) +
+                 ")\n");
+
+  auto& config = AVOCADO_CONFIG;
+  p_over_pinf_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 0)));
+
+  MASTER_MESSAGE("SupersonicInflow (tag=" + std::to_string(bdry_tag) +
+                 ")\n\tp/pinf = " + std::to_string(p_over_pinf_) + "\n");
+}
+void BackPressureBdryNS2D::ComputeBdrySolution(
+    const int num_points, std::vector<double>& bdry_u,
+    std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
+    const std::vector<double>& owner_div_u, const std::vector<double>& normal,
+    const std::vector<double>& coords, const double& time) {
+  static const double pb = p_over_pinf_ * r_inv_;
+  int ind = 0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    GET_SOLUTION_PS(, owner_u);
+    const double p = rm1_ * (dE - 0.5 * (du * du + dv * dv) / d);
+    const double a = std::sqrt(r_ * p / d);
+    const double V = (du * nx + dv * ny) / d;
+    const double local_M = V / a;
+
+    ind = S_ * ipoint;
+    if (std::abs(local_M) >= 1.0) {  // supersonic
+      bdry_u[ind++] = d;
+      bdry_u[ind++] = du;
+      bdry_u[ind++] = dv;
+      bdry_u[ind] = dE;
+    } else {  // subsonic
+      const double p_ratio = pb / p;
+
+      if (local_M >= 0.0) {
+        bdry_u[ind++] = p_ratio * d;
+        bdry_u[ind++] = p_ratio * du;
+        bdry_u[ind++] = p_ratio * dv;
+        bdry_u[ind] = p_ratio * dE;
+      } else {
+        const double ub = std::abs(V) * nx;
+        const double vb = std::abs(V) * ny;
+
+        bdry_u[ind++] = p_ratio * d;
+        bdry_u[ind++] = p_ratio * d * ub;
+        bdry_u[ind++] = p_ratio * d * vb;
+        bdry_u[ind] = rm1_inv_ * pb + 0.5 * p_ratio * d * V * V;
+      }
+    }
+  }
+}
+void BackPressureBdryNS2D::ComputeBdryFlux(const int num_points,
+                                              std::vector<double>& flux,
+                                              FACE_INPUTS,
+                                              const std::vector<double>& coords,
+                                              const double& time) {
+  equation_->ComputeNumFlux(num_points, flux, owner_cell, neighbor_cell,
+                            owner_u, owner_div_u, neighbor_u, neighbor_div_u,
+                            normal);
+}
+void BackPressureBdryNS2D::ComputeBdrySolutionJacobi(
+    const int num_points, double* bdry_u_jacobi,
+    const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
+    const std::vector<double>& normal, const std::vector<double>& coords,
+    const double& time) {
+  static const double pb = p_over_pinf_ * r_inv_;
+  int ind = 0;
+  static std::vector<Dual<S_>> bdry_u(S_);
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    ind = S_ * ipoint;
+    const Dual<S_> d(owner_u[ind++], 0);
+    const Dual<S_> du(owner_u[ind++], 1);
+    const Dual<S_> dv(owner_u[ind++], 2);
+    const Dual<S_> dE(owner_u[ind], 3);
+
+    const auto p = rm1_ * (dE - 0.5 * (du * du + dv * dv) / d);
+    const auto a = std::sqrt(r_ * p / d);
+    const auto V = (du * nx + dv * ny) / d;
+    const auto local_M = V / a;
+
+    ind = S_ * ipoint;
+    if (std::abs(local_M) >= 1.0) {  // supersonic
+      bdry_u[0] = d;
+      bdry_u[1] = du;
+      bdry_u[2] = dv;
+      bdry_u[3] = dE;
+    } else {  // subsonic
+      const auto p_ratio = pb / p;
+
+      if (local_M >= 0.0) {
+        bdry_u[0] = p_ratio * d;
+        bdry_u[1] = p_ratio * du;
+        bdry_u[2] = p_ratio * dv;
+        bdry_u[3] = p_ratio * dE;
+      } else {
+        const auto ub = std::abs(V) * nx;
+        const auto vb = std::abs(V) * ny;
+
+        bdry_u[0] = p_ratio * d;
+        bdry_u[1] = p_ratio * d * ub;
+        bdry_u[2] = p_ratio * d * vb;
+        bdry_u[3] = rm1_inv_ * pb + 0.5 * p_ratio * d * V * V;
+      }
+    }
+
+    // pss
+    ind = SS_ * ipoint;
+    for (int istate = 0; istate < S_; istate++)
+      for (int jstate = 0; jstate < S_; jstate++)
+        bdry_u_jacobi[ind++] = bdry_u[istate].df[jstate];
+  }
+}
+void BackPressureBdryNS2D::ComputeBdryFluxJacobi(
+    const int num_points, std::vector<double>& flux_jacobi,
+    std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
+    const std::vector<double>& coords, const double& time) {
+  static const int max_num_bdry_points = equation_->GetMaxNumBdryPoints();
+  static std::vector<double> flux_neighbor_jacobi(max_num_bdry_points * DSS_);
+  static std::vector<double> flux_neighbor_grad_jacobi(max_num_bdry_points *
+                                                       DDSS_);
   static std::vector<double> bdry_u_jacobi(max_num_bdry_points * SS_);
 
   equation_->ComputeNumFluxJacobi(num_points, flux_jacobi, flux_neighbor_jacobi,
@@ -2129,7 +2527,10 @@ std::shared_ptr<ProblemNS2D> ProblemNS2D::GetProblem(const std::string& name) {
     return std::make_shared<ShockTubeNS2D>();
   else if (!name.compare("DoubleSine"))
     return std::make_shared<DoubleSineNS2D>();
-  ERROR_MESSAGE("Wrong problem (no-exist):" + name + "\n");
+  else if (!name.compare("ShuOsher"))
+    return std::make_shared<ShuOsherNS2D>();
+  else
+    ERROR_MESSAGE("Wrong problem (no-exist):" + name + "\n");
   return nullptr;
 }
 // Problem = FreeStream
@@ -2242,6 +2643,39 @@ void DoubleSineNS2D::Problem(const int num_points,
     solutions[ind++] = values[0];
     for (int idim = 0; idim < D_; idim++)
       solutions[ind++] = values[0] * velocity_[idim];
+    solutions[ind++] = ComputeTotalEnergy(&values[0]);
+  }
+}
+// Problem = ShuOhser
+// ProblemInput = -
+ShuOsherNS2D::ShuOsherNS2D() {
+  MASTER_MESSAGE("ShuOsher problem\n");
+  split_ = 0.125;
+}
+void ShuOsherNS2D::Problem(const int num_points, std::vector<double>& solutions,
+                           const std::vector<double>& coord,
+                           const double time) const {
+  int ind = 0;
+  std::vector<double> values(S_);
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    const double& x = coord[ipoint * D_];
+    const double& y = coord[ipoint * D_ + 1];
+
+    if (x < split_) {
+      values[0] = 3.857143;
+      values[1] = 2.629369;
+      values[2] = 0.0;
+      values[3] = 10.333333;
+    } else {
+      values[0] = 1.0 + 0.2 * std::sin(16.0 * M_PI * x);
+      values[1] = 0.0;
+      values[2] = 0.0;
+      values[3] = 1.0;
+    }
+
+    solutions[ind++] = values[0];
+    for (int idim = 0; idim < D_; idim++)
+      solutions[ind++] = values[0] * values[1 + idim];
     solutions[ind++] = ComputeTotalEnergy(&values[0]);
   }
 }

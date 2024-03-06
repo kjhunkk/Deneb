@@ -55,6 +55,7 @@ class Data {
   std::vector<int> num_cell_points_;
   std::vector<double> cell_volumes_;
   std::vector<double> cell_proj_volumes_;
+  std::vector<double> cell_center_coords_;
   std::vector<std::vector<double>> cell_points_;
   std::vector<std::vector<double>> cell_basis_value_;
   std::vector<std::vector<double>> cell_basis_grad_value_;
@@ -70,6 +71,8 @@ class Data {
   std::vector<int> face_neighbor_type_;
 
   std::vector<int> num_face_points_;
+  std::vector<int> num_face_quad_points_;
+  std::vector<double> face_area_;
   std::vector<std::vector<double>> face_points_;
   std::vector<std::vector<double>> face_normals_;
   std::vector<std::vector<double>> face_owner_basis_value_;
@@ -78,6 +81,9 @@ class Data {
   std::vector<std::vector<double>> face_neighbor_basis_grad_value_;
   std::vector<std::vector<double>> face_owner_coefficients_;
   std::vector<std::vector<double>> face_neighbor_coefficients_;
+  std::vector<std::vector<double>> face_quad_owner_basis_value_;
+  std::vector<std::vector<double>> face_quad_neighbor_basis_value_;
+  std::vector<std::vector<double>> face_quad_weights_;
 
   // boundary
   int num_global_bdries_;
@@ -107,6 +113,8 @@ class Data {
   std::vector<int> peribdry_neighbor_type_;
 
   std::vector<int> num_peribdry_points_;
+  std::vector<int> num_peribdry_quad_points_;
+  std::vector<double> peribdry_area_;
   std::vector<std::vector<double>> peribdry_points_;
   std::vector<std::vector<double>> peribdry_normals_;
   std::vector<std::vector<double>> peribdry_owner_basis_value_;
@@ -115,6 +123,9 @@ class Data {
   std::vector<std::vector<double>> peribdry_neighbor_basis_grad_value_;
   std::vector<std::vector<double>> peribdry_owner_coefficients_;
   std::vector<std::vector<double>> peribdry_neighbor_coefficients_;
+  std::vector<std::vector<double>> peribdry_quad_owner_basis_value_;
+  std::vector<std::vector<double>> peribdry_quad_neighbor_basis_value_;
+  std::vector<std::vector<double>> peribdry_quad_weights_;
 
   // periodic matching nodes
   std::unordered_map<int, std::vector<int>>
@@ -158,8 +169,13 @@ class Data {
   void CombineData(std::vector<T>& A, std::vector<T>& B,
                    const std::vector<int>& rules);
 
+  template <typename T>
+  void SplitData(std::vector<T>& A, std::vector<T>& B,
+                   const std::vector<int>& rules);
+
  public:
   void BuildData(void);
+  void BuildFaceQuadData(void);
   inline int GetNumBases(const int& order) const {
     int num_bases = order + 1;
     for (int idim = 1; idim < dimension_; idim++)
@@ -253,6 +269,9 @@ class Data {
   inline const std::vector<double>& GetCellProjVolumes() const {
     return cell_proj_volumes_;
   };
+  inline const std::vector<double>& GetCellCenterCoords() const {
+    return cell_center_coords_;
+  };
   inline const std::vector<std::vector<double>>& GetCellPoints() const {
     return cell_points_;
   };
@@ -288,6 +307,12 @@ class Data {
   inline const std::vector<int>& GetNumFacePoints() const {
     return num_face_points_;
   };
+  inline const std::vector<int>& GetNumFaceQuadPoints() const {
+    return num_face_quad_points_;
+  };
+  inline const std::vector<double>& GetFaceArea() const { 
+    return face_area_;
+  }
   inline const std::vector<std::vector<double>>& GetFacePoints() const {
     return face_points_;
   };
@@ -318,6 +343,18 @@ class Data {
       const {
     return face_neighbor_coefficients_;
   };
+  inline const std::vector<std::vector<double>>& GetFaceQuadOwnerBasisValue()
+      const {
+    return face_quad_owner_basis_value_;
+  }
+  inline const std::vector<std::vector<double>>& GetFaceQuadNeighborBasisValue()
+      const {
+    return face_quad_neighbor_basis_value_;
+  }
+  inline const std::vector<std::vector<double>>& GetFaceQuadWeights() 
+      const {
+    return face_quad_weights_;
+  }
 
   // boundary
   inline const int& GetNumGlobalBdries() const { return num_global_bdries_; };
@@ -385,6 +422,9 @@ class Data {
   };
   inline const std::vector<int>& GetNumPeribdryPoints() const {
     return num_peribdry_points_;
+  };
+  inline const std::vector<int>& GetNumPeribdryQuadPoints() const {
+    return num_peribdry_quad_points_;
   };
   inline const std::vector<std::vector<double>>& GetPeribdryPoints() const {
     return peribdry_points_;
@@ -456,5 +496,22 @@ void Data::CombineData(std::vector<T>& A, std::vector<T>& B,
       combine[ind++] = std::move(B[j]);
   }
   A = std::move(combine);
+}
+
+template <typename T>
+void Data::SplitData(std::vector<T>& A, std::vector<T>& B,
+                       const std::vector<int>& rules) {
+  const int num_rules = static_cast<int>(rules.size()) / 2 - 1;
+  std::vector<T> splitA(rules[num_rules * 2]);
+  std::vector<T> splitB(rules[num_rules * 2 + 1]);
+  int ind = 0;
+  for (int i = 0; i < num_rules; i++) {
+    for (int j = rules[2 * i], len = rules[2 * i + 2]; j < len; j++)
+      splitA[j] = std::move(A[ind++]);
+    for (int j = rules[2 * i + 1], len = rules[2 * i + 3]; j < len; j++)
+      splitB[j] = std::move(A[ind++]);
+  }
+  A = std::move(splitA);
+  B = std::move(splitB);
 }
 }  // namespace deneb

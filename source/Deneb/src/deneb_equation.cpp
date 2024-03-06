@@ -2,8 +2,11 @@
 
 #include "avocado.h"
 #include "deneb_data.h"
+#include "deneb_equation_advection2d.h"
+#include "deneb_equation_burgers2d.h"
 #include "deneb_equation_equilibriumns2d.h"
 #include "deneb_equation_euler2d.h"
+#include "deneb_equation_euler3d.h"
 #include "deneb_equation_glmmhd2d.h"
 #include "deneb_equation_ns2d.h"
 #include "deneb_equation_ns3d.h"
@@ -17,11 +20,18 @@ std::shared_ptr<Equation> Equation::GetEquation(const std::string& name) {
     return std::make_shared<EquationEquilibriumNS2D>();
   else if (!name.compare("Euler2D"))
     return std::make_shared<EquationEuler2D>();
+  else if (!name.compare("Euler3D"))
+    return std::make_shared<EquationEuler3D>();
   else if (!name.compare("GLMMHD2D"))
     return std::make_shared<EquationGLMMHD2D>();
   else if (!name.compare("NS3D"))
     return std::make_shared<EquationNS3D>();
-  ERROR_MESSAGE("Wrong equation (no-exist):" + name + "\n");
+  else if (!name.compare("Advection2D"))
+    return std::make_shared<EquationAdvection2D>();
+  else if (!name.compare("Burgers2D"))
+    return std::make_shared<EquationBurgers2D>();
+  else
+    ERROR_MESSAGE("Wrong equation (no-exist):" + name + "\n");
   return nullptr;
 }
 

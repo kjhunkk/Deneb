@@ -6,44 +6,29 @@
 #include <unordered_map>
 #include <vector>
 
-#include "avocado.h"
 #include "deneb_equation.h"
 
-// 2-D compressible Navier-Stokes equations at thermochemical equilibrium state
+// 3-D Euler equations
 
 namespace deneb {
-class ProblemEquilibriumNS2D;
-class BoundaryEquilibriumNS2D;
+class ProblemEuler3D;
+class BoundaryEuler3D;
 
 // ------------------------------- Constants ------------------------------- //
-class ConstantsEquilibriumNS2D {
+class ConstantsEuler3D {
  protected:
-  static constexpr int D_ = 2;
-  static constexpr int S_ = 4;
+  static constexpr int D_ = 3;
+  static constexpr int S_ = 5;
   static constexpr int DS_ = D_ * S_;
   static constexpr int SS_ = S_ * S_;
   static constexpr int DSS_ = DS_ * S_;
   static constexpr int DDSS_ = D_ * DSS_;
 
-  const double L_ref_;
-  const double rho_ref_;
-  const double T_ref_;
-  const double a_ref_;
-  const double V_ref_;
-  const double mu_ref_;
-  const double k_ref_;
+  const double r_;
+  const double r_inv_;
+  const double rm1_;
+  const double rm1_inv_;
 
-  const double e_ref_;
-  const double p_ref_;
-  const double Re_;
-  const double Ma_;
-  // alpha = Ma / Re
-  double alpha_;
-  // beta = k*T / (L*rho*a**3)
-  double beta_;
-
-  const double c23_ = 2.0 / 3.0;
-  const double c43_ = 4.0 / 3.0;
   const double pi_ = 4.0 * std::atan(1.0);
 
   int max_num_points_;
@@ -52,77 +37,33 @@ class ConstantsEquilibriumNS2D {
   int max_num_bdry_points_;
 
  public:
-  ConstantsEquilibriumNS2D();
-  virtual ~ConstantsEquilibriumNS2D(){};
+  ConstantsEuler3D();
+  virtual ~ConstantsEuler3D(){};
 
   inline int GetMaxNumBdryPoints() const { return max_num_bdry_points_; };
 
  protected:
-  inline double IDEA_Wrapper(double (*IDEA)(double, double),
-                             double (*IDEA_Grad)(double*, double, double),
-                             double (*IDEA_Hess)(double*, double*, double,
-                                                 double),
-                             const double x1, const double x2) const {
-    return IDEA(x1, x2);
-  }
-  inline void IDEA_Grad_Wrapper(double (*IDEA)(double, double),
-                                double (*IDEA_Grad)(double*, double, double),
-                                double (*IDEA_Hess)(double*, double*, double,
-                                                    double),
-                                double* grad, const double x1,
-                                const double x2) const {
-    IDEA_Grad(grad, x1, x2);
-  }
-  template <int dim>
-  Dual<dim> IDEA_Wrapper(double (*IDEA)(double, double),
-                         double (*IDEA_Grad)(double*, double, double),
-                         double (*IDEA_Hess)(double*, double*, double, double),
-                         const Dual<dim>& x1, const Dual<dim>& x2) const {
-    double grad[2];
-    Dual<dim> var(IDEA_Grad(grad, x1.f, x2.f));
-    for (int i = 0; i < dim; i++)
-      var.df[i] = grad[0] * x1.df[i] + grad[1] * x2.df[i];
-    return var;
-  }
-  template <int dim>
-  void IDEA_Grad_Wrapper(double (*IDEA)(double, double),
-                         double (*IDEA_Grad)(double*, double, double),
-                         double (*IDEA_Hess)(double*, double*, double, double),
-                         Dual<dim>* grad, const Dual<dim>& x1,
-                         const Dual<dim>& x2) const {
-    double grad_dble[2], hess[3];
-    IDEA_Hess(hess, grad_dble, x1.f, x2.f);
-
-    grad[0].f = grad_dble[0];
-    grad[1].f = grad_dble[1];
-    for (int i = 0; i < dim; i++) {
-      grad[0].df[i] = hess[0] * x1.df[i] + hess[1] * x2.df[i];
-      grad[1].df[i] = hess[1] * x1.df[i] + hess[2] * x2.df[i];
-    }
-  }
-  double ComputeInternalEnergy(const double* sol) const;
   double ComputePressure(const double* sol) const;
+  double ComputeTotalEnergy(const double* pri) const;
 };
 
 // ------------------------------- Equation -------------------------------- //
-class EquationEquilibriumNS2D : public Equation,
-                                public ConstantsEquilibriumNS2D {
+class EquationEuler3D : public Equation, public ConstantsEuler3D {
  private:
-  std::shared_ptr<ProblemEquilibriumNS2D> problem_;
-  void (EquationEquilibriumNS2D::*compute_numflux_)(const int num_points,
-                                                    std::vector<double>& flux,
-                                                    FACE_INPUTS);
-  void (EquationEquilibriumNS2D::*compute_numflux_jacobi_)(const int num_points,
-                                                           FACE_JACOBI_OUTPUTS,
-                                                           FACE_INPUTS);
+  std::shared_ptr<ProblemEuler3D> problem_;
+  void (EquationEuler3D::*compute_numflux_)(const int num_points,
+                                            std::vector<double>& flux,
+                                            FACE_INPUTS);
+  void (EquationEuler3D::*compute_numflux_jacobi_)(const int num_points,
+                                                   FACE_JACOBI_OUTPUTS,
+                                                   FACE_INPUTS);
 
-  std::unordered_map<int, std::shared_ptr<BoundaryEquilibriumNS2D>>
-      boundary_registry_;
-  std::vector<std::shared_ptr<BoundaryEquilibriumNS2D>> boundaries_;
+  std::unordered_map<int, std::shared_ptr<BoundaryEuler3D>> boundary_registry_;
+  std::vector<std::shared_ptr<BoundaryEuler3D>> boundaries_;
 
  public:
-  EquationEquilibriumNS2D();
-  virtual ~EquationEquilibriumNS2D();
+  EquationEuler3D();
+  virtual ~EquationEuler3D();
 
   virtual void RegistBoundary(const std::vector<int>& bdry_tag);
   virtual void BuildData(void);
@@ -163,23 +104,20 @@ class EquationEquilibriumNS2D : public Equation,
       const double* input_solution);
 
   void ComputeComFlux(const int num_points, std::vector<double>& flux,
-                      const int icell,
-                      const std::vector<double>& owner_u,
+                      const int icell, const std::vector<double>& owner_u,
                       const std::vector<double>& owner_div_u);
   void ComputeComFluxJacobi(const int num_points,
                             std::vector<double>& flux_jacobi,
                             std::vector<double>& flux_grad_jacobi,
                             const int icell, const std::vector<double>& owner_u,
                             const std::vector<double>& owner_div_u);
-  inline void ComputeNumFlux(const int num_points,
-                             std::vector<double>& flux,
+  inline void ComputeNumFlux(const int num_points, std::vector<double>& flux,
                              FACE_INPUTS) {
     (this->*compute_numflux_)(num_points, flux, owner_cell, neighbor_cell,
                               owner_u, owner_div_u, neighbor_u, neighbor_div_u,
                               normal);
   };
-  inline void ComputeNumFluxJacobi(const int num_points,
-                                   FACE_JACOBI_OUTPUTS,
+  inline void ComputeNumFluxJacobi(const int num_points, FACE_JACOBI_OUTPUTS,
                                    FACE_INPUTS) {
     (this->*compute_numflux_jacobi_)(
         num_points, flux_owner_jacobi, flux_neighbor_jacobi,
@@ -189,23 +127,23 @@ class EquationEquilibriumNS2D : public Equation,
   };
 
   DEFINE_FLUX(LLF);
+  DEFINE_FLUX(Roe);
 };
 
 // ------------------------------- Boundary -------------------------------- //
-class BoundaryEquilibriumNS2D : public ConstantsEquilibriumNS2D {
+class BoundaryEuler3D : public ConstantsEuler3D {
  public:
-  static std::shared_ptr<BoundaryEquilibriumNS2D> GetBoundary(
-      const std::string& type, const int bdry_tag,
-      EquationEquilibriumNS2D* equation);
+  static std::shared_ptr<BoundaryEuler3D> GetBoundary(
+      const std::string& type, const int bdry_tag, EquationEuler3D* equation);
 
  protected:
   int bdry_tag_;
-  EquationEquilibriumNS2D* equation_;
+  EquationEuler3D* equation_;
 
  public:
-  BoundaryEquilibriumNS2D(const int bdry_tag, EquationEquilibriumNS2D* equation)
+  BoundaryEuler3D(const int bdry_tag, EquationEuler3D* equation)
       : bdry_tag_(bdry_tag), equation_(equation){};
-  virtual ~BoundaryEquilibriumNS2D(){};
+  virtual ~BoundaryEuler3D(){};
 
   virtual void ComputeBdrySolution(
       const int num_points, std::vector<double>& bdry_u,
@@ -229,115 +167,119 @@ class BoundaryEquilibriumNS2D : public ConstantsEquilibriumNS2D {
                                      const std::vector<double>& coords,
                                      const double& time) = 0;
 };
-// Boundary = AdiabaticWall
+// Boundary = Wall
 // Dependency: -
-class AdiabaticWallEquilibriumNS2D : public BoundaryEquilibriumNS2D {
+class WallEuler3D : public BoundaryEuler3D {
  public:
-  AdiabaticWallEquilibriumNS2D(const int bdry_tag,
-                               EquationEquilibriumNS2D* equation);
-  virtual ~AdiabaticWallEquilibriumNS2D() {}
+  WallEuler3D(const int bdry_tag, EquationEuler3D* equation);
+  virtual ~WallEuler3D() {}
 
   BOUNDARY_METHODS;
 };
-// Boundary = IsothermalWall
-// Dependency: BdryInput(num)
-// BdryInput(num) = Twall
-class IsothermalWallEquilibriumNS2D : public BoundaryEquilibriumNS2D {
+// Boundary = Riemann
+// Dependency: Ma, AOA, sideslip
+class RiemannEuler3D : public BoundaryEuler3D {
  private:
-  double Twall_;  // K
+  double Ma_;
+  double AoA_;  // degree
+  double sideslip_;  // degree
+  double uf_;
+  double vf_;
+  double wf_;
 
  public:
-  IsothermalWallEquilibriumNS2D(const int bdry_tag,
-                                EquationEquilibriumNS2D* equation);
-  virtual ~IsothermalWallEquilibriumNS2D() {}
+  RiemannEuler3D(const int bdry_tag, EquationEuler3D* equation);
+  virtual ~RiemannEuler3D() {}
+
+  BOUNDARY_METHODS;
+};
+// Boundary = Constant
+// Dependency: BdryInput(num)
+// BdryInput(num) = rho, rhoU, rhoV, rhoW, rhoE
+class ConstantBdryEuler3D : public BoundaryEuler3D {
+ private:
+  std::vector<double> values_;
+
+ public:
+  ConstantBdryEuler3D(const int bdry_tag, EquationEuler3D* equation);
+  virtual ~ConstantBdryEuler3D() {}
 
   BOUNDARY_METHODS;
 };
 // Boundary = SupersonicInflow
 // Dependency: BdryInput(num)
-// BdryInput(num) = Ma, AOA, Pinflow, Tinflow
-class SupersonicInflowEquilibriumNS2D : public BoundaryEquilibriumNS2D {
+// BdryInput(num) = Ma, rho, p/pinf, AoA, sideslip
+class SupersonicInflowBdryEuler3D : public BoundaryEuler3D {
  private:
   double Ma_;
+  double rho_;
+  double p_over_pinf_;
   double AoA_;  // degree
-  double p_inflow_; // Pa
-  double T_inflow_; // K
-
-  double d_;
-  double u_;
-  double v_;
-  double p_;
-  double du_;
-  double dv_;
-  double dE_;
+  double sideslip_; // degree
+  double uf_;
+  double vf_;
+  double wf_;
 
  public:
-  SupersonicInflowEquilibriumNS2D(const int bdry_tag,
-                                  EquationEquilibriumNS2D* equation);
-  virtual ~SupersonicInflowEquilibriumNS2D() {}
+  SupersonicInflowBdryEuler3D(const int bdry_tag, EquationEuler3D* equation);
+  virtual ~SupersonicInflowBdryEuler3D(){};
 
   BOUNDARY_METHODS;
 };
 // Boundary = BackPressure
-// for subsonic and supersonic
 // Dependency: BdryInput(num)
-// BdryInput(num) = back pressure
-class BackPressureEquilibriumNS2D : public BoundaryEquilibriumNS2D {
+// BdryInput(num) = p/pinf
+class BackPressureBdryEuler3D : public BoundaryEuler3D {
  private:
-  double p_back_; // Pa
+  double p_over_pinf_;
 
  public:
-  BackPressureEquilibriumNS2D(const int bdry_tag,
-                              EquationEquilibriumNS2D* equation);
-  virtual ~BackPressureEquilibriumNS2D() {}
+  BackPressureBdryEuler3D(const int bdry_tag, EquationEuler3D* equation);
+  virtual ~BackPressureBdryEuler3D(){};
 
   BOUNDARY_METHODS;
 };
 
 // -------------------------------- Problem -------------------------------- //
-class ProblemEquilibriumNS2D : public ConstantsEquilibriumNS2D {
+class ProblemEuler3D : public ConstantsEuler3D {
  public:
-  static std::shared_ptr<ProblemEquilibriumNS2D> GetProblem(
-      const std::string& name);
+  static std::shared_ptr<ProblemEuler3D> GetProblem(const std::string& name);
 
-  ProblemEquilibriumNS2D() : ConstantsEquilibriumNS2D(){};
-  virtual ~ProblemEquilibriumNS2D(){};
+  ProblemEuler3D() : ConstantsEuler3D(){};
+  virtual ~ProblemEuler3D(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,
                        const double time = 0.0) const = 0;
 };
 // Problem = Constant
-// ProblemInput = value 1, ... , value 4
-class ConstantEquilibriumNS2D : public ProblemEquilibriumNS2D {
+// ProblemInput = "Primitive" or "Conservative", value 1, ... , value 4
+class ConstantEuler3D : public ProblemEuler3D {
  private:
   std::vector<double> values_;
 
  public:
-  ConstantEquilibriumNS2D();
-  virtual ~ConstantEquilibriumNS2D(){};
+  ConstantEuler3D();
+  virtual ~ConstantEuler3D(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,
                        const double time = 0.0) const;
 };
 // Problem = FreeStream
-// ProblemInput = Ma, AOA, Pinf, Tinf
-class FreeStreamEquilibriumNS2D : public ProblemEquilibriumNS2D {
+// ProblemInput = Ma, AOA, sideslip
+class FreeStreamEuler3D : public ProblemEuler3D {
  private:
   double Ma_;
-  double AoA_;       // degree
-  double p_inf_;  // Pa
-  double T_inf_;  // K
-
-  double d_;
-  double du_;
-  double dv_;
-  double dE_;
+  double AoA_;  // degree
+  double sideslip_; // degree
+  double uf_;
+  double vf_;
+  double wf_;
 
  public:
-  FreeStreamEquilibriumNS2D();
-  virtual ~FreeStreamEquilibriumNS2D(){};
+  FreeStreamEuler3D();
+  virtual ~FreeStreamEuler3D(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,
@@ -345,14 +287,32 @@ class FreeStreamEquilibriumNS2D : public ProblemEquilibriumNS2D {
 };
 // Problem = DoubleSine
 // ProblemInput = -
-class DoubleSineEquilibriumNS2D : public ProblemEquilibriumNS2D {
+class DoubleSineEuler3D : public ProblemEuler3D {
  private:
   std::vector<double> velocity_;
   std::vector<double> wave_number_;
 
  public:
-  DoubleSineEquilibriumNS2D();
-  virtual ~DoubleSineEquilibriumNS2D(){};
+  DoubleSineEuler3D();
+  virtual ~DoubleSineEuler3D(){};
+
+  virtual void Problem(const int num_points, std::vector<double>& solutions,
+                       const std::vector<double>& coord,
+                       const double time = 0.0) const;
+};
+// Problem = ShockTube
+// ProblemInput = x-split,
+//                left_rho, left_rhoU, left_rhoE,
+//                right_rho, right_rhoU, right_rhoE
+class ShockTubeEuler3D : public ProblemEuler3D {
+ private:
+  double split_;
+  std::vector<double> left_values_;
+  std::vector<double> right_values_;
+
+ public:
+  ShockTubeEuler3D();
+  virtual ~ShockTubeEuler3D(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,

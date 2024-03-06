@@ -22,5 +22,12 @@ class GMRES {
 
   void Initialize(const Mat& mat);
   int Solve(const Mat& A, const Vec& b, Vec& solution);
+  int GetConvergedReason() {
+    KSPConvergedReason reason;
+    KSPGetConvergedReason(krylov_solver_, &reason);
+    return static_cast<int>(reason);
+  };
+  void DoubleSearchDirection();
+  void ResetSearchDirection();
 };
 }  // namespace deneb

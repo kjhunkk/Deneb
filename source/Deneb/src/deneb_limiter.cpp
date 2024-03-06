@@ -536,40 +536,19 @@ void hMLP_BD::BuildData(void) {
       ERROR_MESSAGE("(hMLPBD) ElemType error\n");
   }
 
+  START_TIMER();
+  MASTER_MESSAGE("Constructing face quadrature data... ");
+  DENEB_DATA->BuildFaceQuadData();
   const int& num_faces = DENEB_DATA->GetNumFaces();
-  const int db = dimension * num_bases;
-  const std::vector<int>& num_face_points = DENEB_DATA->GetNumFacePoints();
-  const std::vector<int>& face_owner_cell = DENEB_DATA->GetFaceOwnerCell();
-  const auto& cell_volumes = DENEB_DATA->GetCellVolumes();
-  const auto& face_normals = DENEB_DATA->GetFaceNormals();
-  const auto& face_owner_coefficients =
-      DENEB_DATA->GetFaceOwnerCoefficients();  // check here
-  std::vector<std::vector<double>> face_coefficients(num_faces);
-  face_areas_.resize(num_faces);
+  const std::vector<double>& face_area = DENEB_DATA->GetFaceArea();
   face_characteristic_length_.resize(num_faces);
   for (int iface = 0; iface < num_faces; iface++) {
-    const int& num_points = num_face_points[iface];
-    const int& owner_cell = face_owner_cell[iface];
-
-    face_coefficients[iface].resize(num_points);
-    for (int ipoint = 0; ipoint < num_points; ipoint++)
-      face_coefficients[iface][ipoint] =
-          cblas_ddot(dimension, &face_owner_coefficients[iface][ipoint * db],
-                     num_bases, &face_normals[iface][ipoint * dimension], 1);
-    cblas_dscal(num_points, std::sqrt(cell_volumes[owner_cell]),
-                &face_coefficients[iface][0], 1);
-
-    double area = 0.0;
-    for (int ipoint = 0; ipoint < num_points; ipoint++)
-      area += face_coefficients[iface][ipoint];
-
-    double length = area;
-    if (dimension == 3) length = std::sqrt(area);
-
-    face_areas_[iface] = area;
+    double length = face_area[iface];
+    if (dimension == 3) length = std::sqrt(length);
     face_characteristic_length_[iface] = length;
   }
-  face_coefficients_ = std::move(face_coefficients);
+  SYNCRO();
+  MASTER_MESSAGE("Complete. (Time: " + std::to_string(STOP_TIMER()) + "s)\n");
 
   START_TIMER();
   MASTER_MESSAGE("Constructing simplex decomposition data... ");
@@ -683,7 +662,7 @@ void hMLP_BD::ConstructSimplex(void) {
         std::vector<double> jacobian_det(num_points);
         jacobian->CalJacobianDet(num_points, &ref_points[0], &jacobian_det[0]);
         for (int ipoint = 0; ipoint < num_points; ipoint++)
-          quad_weights[ipoint] *= std::abs(jacobian_det[ipoint]);
+          quad_weights[ipoint] *= jacobian_det[ipoint];
         quad_points.resize(num_points * dimension);
         jacobian->TransformToPhyCoords(num_points, &ref_points[0],
                                        &quad_points[0]);
@@ -1054,19 +1033,22 @@ void hMLP_BD::VertexMinMax(const double* solution_ptr) {
   static const int& order = DENEB_DATA->GetOrder();
   static const int& num_faces = DENEB_DATA->GetNumFaces();
   static const int& num_inner_faces = DENEB_DATA->GetNumInnerFaces();
-  static const std::vector<int>& num_face_points =
-      DENEB_DATA->GetNumFacePoints();
+  static const std::vector<int>& num_face_quad_points =
+      DENEB_DATA->GetNumFaceQuadPoints();
   static const std::vector<int>& face_owner_cell =
       DENEB_DATA->GetFaceOwnerCell();
   static const std::vector<int>& face_neighbor_cell =
       DENEB_DATA->GetFaceNeighborCell();
+  static const std::vector<double>& face_area = DENEB_DATA->GetFaceArea();
   static const std::vector<std::vector<double>>& face_owner_basis_value =
       DENEB_DATA->GetFaceOwnerBasisValue();
   static const std::vector<std::vector<double>>& face_neighbor_basis_value =
       DENEB_DATA->GetFaceNeighborBasisValue();
+  static const std::vector<std::vector<double>>& face_quad_weights =
+      DENEB_DATA->GetFaceQuadWeights();
   std::vector<std::vector<double>> face_difference(num_states);
   for (int iface = 0; iface < num_inner_faces; iface++) {
-    const int num_points = num_face_points[iface];
+    const int num_points = num_face_quad_points[iface];
     const int owner_cell = face_owner_cell[iface];
     const int neighbor_cell = face_neighbor_cell[iface];
 
@@ -1086,17 +1068,17 @@ void hMLP_BD::VertexMinMax(const double* solution_ptr) {
         state_sum[istate] +=
             std::abs(owner_solution[ipoint * num_states + istate] -
                      neighbor_solution[ipoint * num_states + istate]) *
-            face_coefficients_[iface][ipoint];
+            face_quad_weights[iface][ipoint];
       }
     const double denominator = std::pow(face_characteristic_length_[iface],
                                         0.5 * static_cast<double>(order + 1));
     for (int istate = 0; istate < num_states; istate++) {
-      state_sum[istate] /= (face_areas_[iface] * denominator);
+      state_sum[istate] /= (face_area[iface] * denominator);
       face_difference[istate].push_back(state_sum[istate]);
     }
   }
   for (int iface = num_inner_faces; iface < num_faces; iface++) {
-    const int num_points = num_face_points[iface];
+    const int num_points = num_face_quad_points[iface];
     const int owner_cell = face_owner_cell[iface];
     const int neighbor_cell = face_neighbor_cell[iface];
 
@@ -1117,12 +1099,12 @@ void hMLP_BD::VertexMinMax(const double* solution_ptr) {
         state_sum[istate] +=
             std::abs(owner_solution[ipoint * num_states + istate] -
                      neighbor_solution[ipoint * num_states + istate]) *
-            face_coefficients_[iface][ipoint];
+            face_quad_weights[iface][ipoint];
       }
     const double denominator = std::pow(face_characteristic_length_[iface],
                                         0.5 * static_cast<double>(order + 1));
     for (int istate = 0; istate < num_states; istate++) {
-      state_sum[istate] /= (face_areas_[iface] * denominator);
+      state_sum[istate] /= (face_area[iface] * denominator);
       face_difference[istate].push_back(state_sum[istate]);
     }
   }

@@ -109,10 +109,8 @@ class hMLP_BD : public Limiter {
   std::vector<double> vertex_min_;
   std::vector<double> vertex_max_;
   std::vector<double> vertex_average_;
-  std::vector<double> face_areas_;
   std::vector<double> face_characteristic_length_;
   std::vector<std::vector<double>> cell_vertex_basis_value_;
-  std::vector<std::vector<double>> face_coefficients_;
   std::vector<std::vector<double>> simplex_average_coefficients_;
   std::vector<std::vector<double>> simplex_p1_coefficients_;
   std::vector<std::vector<double>> simplex_volume_;

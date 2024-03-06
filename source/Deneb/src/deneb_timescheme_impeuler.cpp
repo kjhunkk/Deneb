@@ -54,7 +54,7 @@ void TimeschemeImpEuler::Marching(void) {
   MASTER_MESSAGE(avocado::GetTitle("TimeschemeImpEuler::Marching()"));
   DENEB_LIMITER->Limiting(&solution_[0]); 
   DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(
-      &solution_[0]); 
+      &solution_[0], 0.0); 
   auto& config = AVOCADO_CONFIG;
   const std::string& dir = config->GetConfigValue(RETURN_DIR);
   DENEB_CONTOUR->FaceGrid(dir + RETURN_POST_DIR + "Face/Grid" +
@@ -87,7 +87,7 @@ void TimeschemeImpEuler::Marching(void) {
 
     // Updating solution
     DENEB_EQUATION->PreProcess(solution);
-    DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution); 
+    DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt); 
     VecGetArray(rhs_, &rhs_ptr);
     DENEB_EQUATION->ComputeRHS(solution, rhs_ptr, t);
     cblas_dscal(length_, -1.0, rhs_ptr, 1);

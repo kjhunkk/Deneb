@@ -4,14 +4,15 @@
 #include <sstream>
 
 #include "avocado.h"
+#include "deneb_artificial_viscosity.h"
 #include "deneb_config_macro.h"
 #include "deneb_contour.h"
 #include "deneb_data.h"
 #include "deneb_equation.h"
-#include "deneb_limiter.h" 
-#include "deneb_pressurefix.h" 
-#include "deneb_artificial_viscosity.h" 
+#include "deneb_limiter.h"
+#include "deneb_pressurefix.h"
 #include "deneb_saveload.h"
+#include "deneb_utility.h"
 
 namespace deneb {
 // ------------------------ SSPRK ------------------------ //
@@ -28,12 +29,22 @@ void TimeschemeSSPRK::BuildData(void) {
   local_timestep_.resize(num_cells);
   computing_cost_ = 0.0;
 
+  auto& config = AVOCADO_CONFIG;
+  const std::string& roll_back_mechanism =
+      config->GetConfigValue(ROLL_BACK_MECHANISM);
+  if (!roll_back_mechanism.compare("None")) {
+    roll_back_ = std::make_shared<NoRollBack>();
+  } else if (!roll_back_mechanism.compare("Constant")) {
+    roll_back_ = std::make_shared<ConstantRollBack>();
+  } else
+    ERROR_MESSAGE(
+        "Wrong roll back mechanism (no-exist): " + roll_back_mechanism + "\n");
+
   InitSolution();
 }
 void TimeschemeSSPRK::Marching(void) {
-  DENEB_LIMITER->Limiting(&solution_[0]); 
-  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(
-      &solution_[0]);  
+  DENEB_LIMITER->Limiting(&solution_[0]);
+  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(&solution_[0], 0.0);
   auto& config = AVOCADO_CONFIG;
   const std::string& dir = config->GetConfigValue(RETURN_DIR);
   DENEB_CONTOUR->FaceGrid(dir + RETURN_POST_DIR + "Face/Grid" +
@@ -50,6 +61,7 @@ void TimeschemeSSPRK::Marching(void) {
   bool is_stop, is_post, is_save;
   double* solution = &solution_[0];
 
+  roll_back_->UpdateBuffer(solution);
   while (iteration_ < max_iteration_) {
     START_TIMER();
     // Computing time step
@@ -64,7 +76,12 @@ void TimeschemeSSPRK::Marching(void) {
 
     // Updating solution
     DENEB_EQUATION->PreProcess(solution);
-    UpdateSolution(solution, t, dt);
+    if (UpdateSolution(solution, t, dt)) {
+      roll_back_->UpdateBuffer(solution);
+    } else {
+      roll_back_->ExecuteRollBack(solution, iteration_);
+      continue;
+    }
 
     // Updating time and iteration
     current_time_ += time_step;
@@ -87,7 +104,7 @@ void TimeschemeSSPRK::Marching(void) {
     is_stop = is_stop || stop_.CheckIterationFinish(iteration_);
     is_post = is_post || post_.CheckIterationEvent(iteration_);
     is_save = is_save || save_.CheckIterationEvent(iteration_);
-    
+
     if (is_post) {
       DENEB_CONTOUR->FaceSolution(dir + RETURN_POST_DIR + "Face/Iter" +
                                       std::to_string(iteration_) + ".plt",
@@ -123,6 +140,12 @@ void TimeschemeSSPRK::Marching(void) {
         dir + RETURN_SAVE_DIR + "Iter" + std::to_string(iteration_) + ".SAVE",
         &solution_[0], data);
   }
+
+  // Compute error
+  std::vector<double> exact_solution(length_);
+  DENEB_EQUATION->ComputeInitialSolution(&exact_solution[0], 0.0);
+  DENEB_UTILITY->ComputeError(dir + RETURN_POST_DIR + "Utility/Error.dat",
+                              &solution_[0], &exact_solution[0]);
 }
 
 // ----------------------- SSPRK11 ----------------------- //
@@ -142,14 +165,16 @@ void TimeschemeSSPRK11::Marching(void) {
   MASTER_MESSAGE(avocado::GetTitle("TimeschemeSSPRK11::Marching()"));
   TimeschemeSSPRK::Marching();
 }
-void TimeschemeSSPRK11::UpdateSolution(double* solution, const double t,
+bool TimeschemeSSPRK11::UpdateSolution(double* solution, const double t,
                                        const double dt) {
   // SSPRK11 first stage
-  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution); 
   DENEB_EQUATION->ComputeRHS(solution, &rhs_[0], t + c_[0] * dt);
   for (int i = 0; i < length_; i++) solution[i] = solution[i] - dt * rhs_[i];
-  DENEB_LIMITER->Limiting(solution);    
-  DENEB_PRESSUREFIX->Execute(solution); 
+  DENEB_LIMITER->Limiting(solution);
+  DENEB_PRESSUREFIX->Execute(solution);
+  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt);
+
+  return true;
 }
 
 // ----------------------- SSPRK33 ----------------------- //
@@ -171,33 +196,43 @@ void TimeschemeSSPRK33::Marching(void) {
   MASTER_MESSAGE(avocado::GetTitle("TimeschemeSSPRK33::Marching()"));
   TimeschemeSSPRK::Marching();
 }
-void TimeschemeSSPRK33::UpdateSolution(double* solution, const double t,
+bool TimeschemeSSPRK33::UpdateSolution(double* solution, const double t,
                                        const double dt) {
   // SSPRK33 first stage
-  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution);
   DENEB_EQUATION->ComputeRHS(solution, &rhs_[0], t + c_[0] * dt);
   ptr_ = solution;
   solution = &u_[0];
   for (int i = 0; i < length_; i++) solution[i] = ptr_[i] - dt * rhs_[i];
   DENEB_LIMITER->Limiting(solution);
-  DENEB_PRESSUREFIX->Execute(solution); 
+  DENEB_PRESSUREFIX->Execute(solution);
+  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt);
 
   // SSPRK33 second stage
-  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution);
+  if (roll_back_->Status() &&
+      (ComputeGlobalTimestep(solution, local_timestep_) < 0.9 * dt))
+    return false;
   DENEB_EQUATION->ComputeRHS(solution, &rhs_[0], t + c_[1] * dt);
   for (int i = 0; i < length_; i++)
     solution[i] = 0.25 * (3.0 * ptr_[i] + solution[i] - dt * rhs_[i]);
   DENEB_LIMITER->Limiting(solution);
-  DENEB_PRESSUREFIX->Execute(solution); 
+  DENEB_PRESSUREFIX->Execute(solution);
+  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt);
+
+  cost_shock_capturing_ += STOP_TIMER_TAG("ShockCapturing");
 
   // SSPRK33 third stage
-  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution);
+  if (roll_back_->Status() &&
+      (ComputeGlobalTimestep(solution, local_timestep_) < 0.9 * dt))
+    return false;
   DENEB_EQUATION->ComputeRHS(solution, &rhs_[0], t + c_[2] * dt);
   for (int i = 0; i < length_; i++)
     ptr_[i] = (ptr_[i] + 2.0 * solution[i] - 2.0 * dt * rhs_[i]) * c13_;
   solution = ptr_;
   DENEB_LIMITER->Limiting(solution);
   DENEB_PRESSUREFIX->Execute(solution);
+  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt);
+
+  return true;
 }
 
 // ----------------------- SSPRK54 ----------------------- //
@@ -223,10 +258,9 @@ void TimeschemeSSPRK54::Marching(void) {
   MASTER_MESSAGE(avocado::GetTitle("TimeschemeSSPRK54::Marching()"));
   TimeschemeSSPRK::Marching();
 }
-void TimeschemeSSPRK54::UpdateSolution(double* solution, const double t,
+bool TimeschemeSSPRK54::UpdateSolution(double* solution, const double t,
                                        const double dt) {
   // SSPRK54 first stage
-  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution);
   DENEB_EQUATION->ComputeRHS(solution, &rhs_[0], t + c_[0] * dt);
   ptr_ = solution;
   solution = &u_[0];
@@ -234,9 +268,12 @@ void TimeschemeSSPRK54::UpdateSolution(double* solution, const double t,
     solution[i] = ptr_[i] - 0.391752226571890 * dt * rhs_[i];
   DENEB_LIMITER->Limiting(solution);
   DENEB_PRESSUREFIX->Execute(solution);
+  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt);
 
   // SSPRK54 second stage
-  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution);
+  if (roll_back_->Status() &&
+      (ComputeGlobalTimestep(solution, local_timestep_) < 0.9 * dt))
+    return false;
   DENEB_EQUATION->ComputeRHS(solution, &rhs_[0], t + c_[1] * dt);
   for (int i = 0; i < length_; i++)
     solution[i] = 0.444370493651235 * ptr_[i] +
@@ -244,9 +281,12 @@ void TimeschemeSSPRK54::UpdateSolution(double* solution, const double t,
                   0.368410593050371 * dt * rhs_[i];
   DENEB_LIMITER->Limiting(solution);
   DENEB_PRESSUREFIX->Execute(solution);
+  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt);
 
   // SSPRK54 third stage
-  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution);
+  if (roll_back_->Status() &&
+      (ComputeGlobalTimestep(solution, local_timestep_) < 0.9 * dt))
+    return false;
   DENEB_EQUATION->ComputeRHS(solution, &rhs_[0], t + c_[2] * dt);
   ptr2_ = solution;
   solution = &u2_[0];
@@ -255,9 +295,12 @@ void TimeschemeSSPRK54::UpdateSolution(double* solution, const double t,
                   0.251891774271694 * dt * rhs_[i];
   DENEB_LIMITER->Limiting(solution);
   DENEB_PRESSUREFIX->Execute(solution);
+  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt);
 
   // SSPRK54 fourth stage
-  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution);
+  if (roll_back_->Status() &&
+      (ComputeGlobalTimestep(solution, local_timestep_) < 0.9 * dt))
+    return false;
   DENEB_EQUATION->ComputeRHS(solution, &rhs2_[0], t + c_[3] * dt);
   solution = ptr_;
   ptr_ = &u2_[0];
@@ -267,9 +310,12 @@ void TimeschemeSSPRK54::UpdateSolution(double* solution, const double t,
                   0.544974750228521 * dt * rhs2_[i];
   DENEB_LIMITER->Limiting(solution);
   DENEB_PRESSUREFIX->Execute(solution);
+  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt);
 
   // SSPRK54 fifth stage
-  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution);
+  if (roll_back_->Status() &&
+      (ComputeGlobalTimestep(solution, local_timestep_) < 0.9 * dt))
+    return false;
   DENEB_EQUATION->ComputeRHS(solution, &rhs_[0], t + c_[4] * dt);
   for (int i = 0; i < length_; i++)
     solution[i] = 0.517231671970585 * ptr2_[i] + 0.096059710526147 * ptr_[i] -
@@ -278,5 +324,8 @@ void TimeschemeSSPRK54::UpdateSolution(double* solution, const double t,
                   0.226007483236906 * dt * rhs_[i];
   DENEB_LIMITER->Limiting(solution);
   DENEB_PRESSUREFIX->Execute(solution);
+  DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt);
+
+  return true;
 }
 }  // namespace deneb

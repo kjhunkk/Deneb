@@ -50,12 +50,23 @@ void TimeschemeRosenbrock::BuildData(void) {
     VecDuplicate(delta_, &stage_solution_[istage]);
   }
 
+  auto& config = AVOCADO_CONFIG;
+  const std::string& roll_back_mechanism =
+      config->GetConfigValue(ROLL_BACK_MECHANISM);
+  if (!roll_back_mechanism.compare("None")) {
+    roll_back_ = std::make_shared<NoRollBack>();
+  } else if (!roll_back_mechanism.compare("Constant")) {
+    roll_back_ = std::make_shared<ConstantRollBack>();
+  } else
+    ERROR_MESSAGE(
+        "Wrong roll back mechanism (no-exist): " + roll_back_mechanism + "\n");
+
   InitSolution();
 }
 void TimeschemeRosenbrock::Marching(void) {
   DENEB_LIMITER->Limiting(&solution_[0]); 
   DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(
-      &solution_[0]); 
+      &solution_[0], 0.0); 
   auto& config = AVOCADO_CONFIG;
   const std::string& dir = config->GetConfigValue(RETURN_DIR);
   DENEB_CONTOUR->FaceGrid(dir + RETURN_POST_DIR + "Face/Grid" +
@@ -107,10 +118,10 @@ void TimeschemeRosenbrock::Marching(void) {
         VecRestoreArray(stage_solution_[jstage], &stage_solution_ptr);
       }
 
-      DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(
-          &pseudo_solution[0]);                         
       DENEB_LIMITER->Limiting(&pseudo_solution[0]);     
       DENEB_PRESSUREFIX->Execute(&pseudo_solution[0]);  
+      DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(
+          &pseudo_solution[0], dt);
 
       VecGetArray(rhs_, &rhs_ptr);
       DENEB_EQUATION->ComputeRHS(&pseudo_solution[0], rhs_ptr,
@@ -128,6 +139,11 @@ void TimeschemeRosenbrock::Marching(void) {
       VecRestoreArray(rhs_, &rhs_ptr);
       sub_iteration[istage] =
           solver_.Solve(sysmat_, rhs_, stage_solution_[istage]);
+      int converged = solver_.GetConvergedReason();  // Check convergence
+      if (converged < 0) {
+        ERROR_MESSAGE("GMRES diverged! : KSPConvergedReason = " +
+                       std::to_string(converged) + "\n");
+      }
     }
     VecCopy(stage_solution_[0], delta_);
     VecScale(delta_, coeff_m_[0]);
@@ -136,22 +152,16 @@ void TimeschemeRosenbrock::Marching(void) {
 
     // Check divergence
     VecNorm(delta_, NORM_2, &error_norm);
-    double iteration_multiply = 1.0;
-    for (auto& iter : sub_iteration) iteration_multiply *= iter;
-    if ((!std::isnormal(error_norm)) || (std::abs(iteration_multiply)<1.0E-6)) {
-      MASTER_MESSAGE("GMRES diverged!\n");
-      is_stop = true;
-    } else {
-      VecGetArray(delta_, &delta_ptr);
-      cblas_daxpy(length_, -1.0, delta_ptr, 1, &solution_[0], 1);
-      VecRestoreArray(delta_, &delta_ptr);
-      DENEB_LIMITER->Limiting(&solution_[0]);     
-      DENEB_PRESSUREFIX->Execute(&solution_[0]);  
+    VecGetArray(delta_, &delta_ptr);
+    cblas_daxpy(length_, -1.0, delta_ptr, 1, &solution_[0], 1);
+    VecRestoreArray(delta_, &delta_ptr);
+    DENEB_LIMITER->Limiting(&solution_[0]);
+    DENEB_PRESSUREFIX->Execute(&solution_[0]);
+    DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(&solution_[0], dt);
 
-      // Updating time and iteration
-      current_time_ += time_step;
-      iteration_++;
-    }
+    // Updating time and iteration
+    current_time_ += time_step;
+    iteration_++;
 
     // Measuring computing cost
     const double cost = STOP_TIMER();

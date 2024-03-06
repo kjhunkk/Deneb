@@ -3,7 +3,7 @@
 #include <fstream>
 
 namespace deneb {
-std::shared_ptr<Element> DENEB_ELEMENT_NAME = nullptr;
+std::shared_ptr<Element> DENEB_ELEMENT;
 const std::string Element::GetElementName(const ElemType elemtype) {
   switch (elemtype) {
     case ElemType::LINE:

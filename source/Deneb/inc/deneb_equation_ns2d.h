@@ -187,6 +187,15 @@ class AdiabaticWallNS2D : public BoundaryNS2D {
 
   BOUNDARY_METHODS;
 };
+// Boundary = SlipWall
+// Dependency: -
+class SlipWallNS2D : public BoundaryNS2D {
+ public:
+  SlipWallNS2D(const int bdry_tag, EquationNS2D* equation);
+  virtual ~SlipWallNS2D() {}
+
+  BOUNDARY_METHODS;
+};
 // Boundary = Riemann
 // Dependency: Ma, AOA
 class RiemannNS2D : public BoundaryNS2D {
@@ -212,6 +221,37 @@ class ConstantBdryNS2D : public BoundaryNS2D {
  public:
   ConstantBdryNS2D(const int bdry_tag, EquationNS2D* equation);
   virtual ~ConstantBdryNS2D() {}
+
+  BOUNDARY_METHODS;
+};
+// Boundary = SupersonicInflow
+// Dependency: BdryInput(num)
+// BdryInput(num) = Ma, rho, p/pinf, AoA
+class SupersonicInflowBdryNS2D : public BoundaryNS2D {
+ private:
+  double Ma_;
+  double rho_;
+  double p_over_pinf_;
+  double AoA_;  // degree
+  double uf_;
+  double vf_;
+
+ public:
+  SupersonicInflowBdryNS2D(const int bdry_tag, EquationNS2D* equation);
+  virtual ~SupersonicInflowBdryNS2D(){};
+
+  BOUNDARY_METHODS;
+};
+// Boundary = BackPressure
+// Dependency: BdryInput(num)
+// BdryInput(num) = p/pinf
+class BackPressureBdryNS2D : public BoundaryNS2D {
+ private:
+  double p_over_pinf_;
+
+ public:
+  BackPressureBdryNS2D(const int bdry_tag, EquationNS2D* equation);
+  virtual ~BackPressureBdryNS2D(){};
 
   BOUNDARY_METHODS;
 };
@@ -273,6 +313,20 @@ class DoubleSineNS2D : public ProblemNS2D {
  public:
   DoubleSineNS2D();
   virtual ~DoubleSineNS2D(){};
+
+  virtual void Problem(const int num_points, std::vector<double>& solutions,
+                       const std::vector<double>& coord,
+                       const double time = 0.0) const;
+};
+// Problem = ShuOhser
+// ProblemInput = -
+class ShuOsherNS2D : public ProblemNS2D {
+ private:
+  double split_;
+
+ public:
+  ShuOsherNS2D();
+  virtual ~ShuOsherNS2D(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,

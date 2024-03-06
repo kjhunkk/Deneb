@@ -4,9 +4,9 @@
 #include <string>
 
 #include "avocado.h"
-#include "deneb_config_macro.h"
 #include "deneb_DRM.h"
 #include "deneb_basis.h"
+#include "deneb_config_macro.h"
 #include "deneb_equation.h"
 #include "deneb_grid_builder.h"
 #include "deneb_jacobian.h"
@@ -78,6 +78,7 @@ void Data::BuildData(void) {
   num_cell_points_.resize(num_cells_);
   cell_volumes_.resize(num_total_cells_, 0.0);
   cell_proj_volumes_.resize(num_cells_ * dimension_, 0.0);
+  cell_center_coords_.resize(num_total_cells_ * dimension_, 0.0);
   cell_points_.resize(num_cells_);
   cell_basis_value_.resize(num_cells_);
   cell_basis_grad_value_.resize(num_cells_);
@@ -229,7 +230,266 @@ void Data::BuildData(void) {
   MASTER_MESSAGE("Data::BuildData() completes. (Time: " +
                  std::to_string(GET_RECORD_TAG("BuildData")) + "s)\n");
 }
+void Data::BuildFaceQuadData(void) {
+  const int num_pure_faces = num_faces_ - num_peribdries_;
+  const int num_pure_inner_faces = num_inner_faces_ - num_inner_peribdries_;
+  for (int i = num_inner_faces_; i < num_faces_; i++)
+    face_neighbor_cell_[i] += num_cells_;
 
+  const std::vector<int> rules = {0,
+                                  0,
+                                  num_pure_inner_faces,
+                                  num_inner_peribdries_,
+                                  num_pure_faces,
+                                  num_peribdries_};
+
+  SplitData(face_owner_cell_, peribdry_owner_cell_, rules);
+  SplitData(face_neighbor_cell_, peribdry_neighbor_cell_, rules);
+  SplitData(face_owner_type_, peribdry_owner_type_, rules);
+  SplitData(face_neighbor_type_, peribdry_neighbor_type_, rules);
+
+  num_face_quad_points_.resize(num_pure_faces);
+  face_area_.resize(num_pure_faces);
+  face_quad_owner_basis_value_.resize(num_pure_faces);
+  face_quad_neighbor_basis_value_.resize(num_pure_faces);
+  face_quad_weights_.resize(num_pure_faces);
+  for (int iface = 0; iface < num_pure_faces; iface++) {
+    const int owner_index = face_owner_cell_[iface];
+    const int owner_type = face_owner_type_[iface];
+    const int neighbor_index = face_neighbor_cell_[iface];
+
+    const std::shared_ptr<Jacobian> owner_cell_jacobian =
+        cell_jacobians_[owner_index];
+    const Element* owner_cell_element = cell_element_[owner_index];
+    const ElemType face_elemtype =
+        owner_cell_element->GetFaceElemtype(owner_type);
+    const int& elemorder = cell_order_[owner_index];
+
+    int num_flux_bases;
+    std::shared_ptr<DRMSurface> drm = DRMSurface::GetDRM(face_elemtype);
+    std::shared_ptr<BasisSurface> flux_basis = drm->GetApproximateBasis();
+    {
+      std::vector<int> face_nodes =
+          owner_cell_element->GetFacetypeNodes(1)[owner_type];
+      const int& start_index = cell_node_ptr_[owner_index];
+      for (auto&& inode : face_nodes)
+        inode = cell_node_ind_[start_index + inode];
+      const int num_nodes = static_cast<int>(face_nodes.size());
+
+      std::vector<double> coords;
+      coords.resize(num_nodes * dimension_);
+      avocado::VecCopy(num_nodes, &face_nodes[0], &node_coords_[0], dimension_,
+                       &coords[0], dimension_);
+      flux_basis->SetTransform(coords);
+    }
+
+    std::vector<double> quad_points, quad_weights, quad_normal;
+    {
+      const int quad_order = order_;
+
+      std::vector<double> ref_points, ref_weights;
+      flux_basis->GetBasisPolynomial()->GetSurfaceQuadrature(
+          quad_order, face_elemtype, elemorder, ref_points, ref_weights);
+
+      const int num_points = static_cast<int>(ref_weights.size());
+      std::vector<double> phy_points(num_points * dimension_);
+      quad_points.resize(num_points * dimension_);
+      owner_cell_element->TransformToPhyCoords(owner_type, num_points,
+                                               &ref_points[0], &phy_points[0]);
+      owner_cell_jacobian->TransformToPhyCoords(num_points, &phy_points[0],
+                                                &quad_points[0]);
+
+      quad_weights.resize(num_points);
+      const double* normal = owner_cell_element->GetFacetypeNormal(owner_type);
+      std::vector<double> cofactor(num_points * dimension_ * dimension_);
+      owner_cell_jacobian->CalJacobianCofMat(num_points, &phy_points[0],
+                                             &cofactor[0]);
+
+      const Element* face_element = DENEB_ELEMENT->GetElement(face_elemtype);
+      const double area_ratio =
+          owner_cell_element->GetFacetypeArea(owner_type) /
+          face_element->GetVolume();
+      quad_normal.resize(num_points * dimension_);
+      for (int ipoint = 0; ipoint < num_points; ipoint++) {
+        gemvAx(1.0, &cofactor[ipoint * dimension_ * dimension_], dimension_,
+               normal, 1, 0.0, &quad_normal[ipoint * dimension_], 1, dimension_,
+               dimension_);
+        quad_weights[ipoint] =
+            avocado::VecLength(dimension_, &quad_normal[ipoint * dimension_]) *
+            ref_weights[ipoint] * area_ratio;
+      }
+    }
+
+    const int num_quad_points = static_cast<int>(quad_weights.size());
+    double area = 0.0;
+    for (auto&& weight : quad_weights) area += weight;
+
+    num_face_quad_points_[iface] = num_quad_points;
+    face_area_[iface] = area;
+    face_quad_weights_[iface] = quad_weights;
+
+    {
+      std::vector<double> owner_basis_value(num_quad_points * num_bases_);
+      std::vector<double> neighbor_basis_value(num_quad_points * num_bases_);
+
+      cell_basis_[owner_index]->GetBasis(num_quad_points, &quad_points[0],
+                                        &owner_basis_value[0]);
+      cell_basis_[neighbor_index]->GetBasis(num_quad_points, &quad_points[0],
+                                          &neighbor_basis_value[0]);
+
+      face_quad_owner_basis_value_[iface] = std::move(owner_basis_value);
+      face_quad_neighbor_basis_value_[iface] = std::move(neighbor_basis_value);
+    }
+  }
+
+  num_peribdry_quad_points_.resize(num_faces_);
+  peribdry_area_.resize(num_faces_);
+  peribdry_quad_owner_basis_value_.resize(num_faces_);
+  peribdry_quad_neighbor_basis_value_.resize(num_faces_);
+  peribdry_quad_weights_.resize(num_faces_);
+  for (int ibdry = 0; ibdry < num_peribdries_; ibdry++) {
+    const int owner_index = peribdry_owner_cell_[ibdry];
+    const int owner_type = peribdry_owner_type_[ibdry];
+    const int neighbor_index = peribdry_neighbor_cell_[ibdry];
+    const int neighbor_type = peribdry_neighbor_type_[ibdry];
+
+    const std::shared_ptr<Jacobian> owner_cell_jacobian =
+        cell_jacobians_[owner_index];
+    const Element* owner_cell_element = cell_element_[owner_index];
+    const Element* neighbor_cell_element = cell_element_[neighbor_index];
+    const ElemType bdry_elemtype =
+        owner_cell_element->GetFaceElemtype(owner_type);
+    const int& elemorder = cell_order_[owner_index];
+
+    std::vector<double> offset(dimension_);  // owner to neighbor
+    {
+      std::vector<int> owner_bdry_nodes =
+          owner_cell_element->GetFacetypeNodes(1)[owner_type];
+      const int& owner_start_index = cell_node_ptr_[owner_index];
+      for (auto&& inode : owner_bdry_nodes)
+        inode = cell_node_ind_[owner_start_index + inode];
+      const int num_nodes = static_cast<int>(owner_bdry_nodes.size());
+
+      std::vector<double> owner_coords;
+      owner_coords.resize(num_nodes * dimension_);
+      avocado::VecCopy(num_nodes, &owner_bdry_nodes[0], &node_coords_[0],
+                       dimension_, &owner_coords[0], dimension_);
+
+      std::vector<int> neighbor_bdry_nodes =
+          neighbor_cell_element->GetFacetypeNodes(1)[neighbor_type];
+      const int& neighbor_start_index = cell_node_ptr_[neighbor_index];
+      for (auto&& inode : neighbor_bdry_nodes)
+        inode = cell_node_ind_[neighbor_start_index + inode];
+
+      std::vector<double> neighbor_coords;
+      neighbor_coords.resize(num_nodes * dimension_);
+      avocado::VecCopy(num_nodes, &neighbor_bdry_nodes[0], &node_coords_[0],
+                       dimension_, &neighbor_coords[0], dimension_);
+
+      std::vector<double> neighbor_owner(num_nodes * dimension_);
+      for (int i = 0, len = num_nodes * dimension_; i < len; i++)
+        neighbor_owner[i] = neighbor_coords[i] - owner_coords[i];
+
+      for (int idim = 0; idim < dimension_; idim++)
+        offset[idim] =
+            avocado::VecAverage(num_nodes, &neighbor_owner[idim], dimension_);
+    }
+
+    int num_flux_bases;
+    std::shared_ptr<DRMSurface> drm = DRMSurface::GetDRM(bdry_elemtype);
+    std::shared_ptr<BasisSurface> flux_basis = drm->GetApproximateBasis();
+    {
+      std::vector<int> bdry_nodes =
+          owner_cell_element->GetFacetypeNodes(1)[owner_type];
+      const int& start_index = cell_node_ptr_[owner_index];
+      for (auto&& inode : bdry_nodes)
+        inode = cell_node_ind_[start_index + inode];
+      const int num_nodes = static_cast<int>(bdry_nodes.size());
+
+      std::vector<double> coords;
+      coords.resize(num_nodes * dimension_);
+      avocado::VecCopy(num_nodes, &bdry_nodes[0], &node_coords_[0], dimension_,
+                       &coords[0], dimension_);
+      flux_basis->SetTransform(coords);
+    }
+
+    std::vector<double> quad_points, quad_weights, quad_normal;
+    std::vector<double> neighbor_quad_points;
+
+    const int quad_order = order_;
+
+    std::vector<double> ref_points, ref_weights;
+    flux_basis->GetBasisPolynomial()->GetSurfaceQuadrature(
+        quad_order, bdry_elemtype, elemorder, ref_points, ref_weights);
+
+    const int num_points = static_cast<int>(ref_weights.size());
+    std::vector<double> phy_points(num_points * dimension_);
+    quad_points.resize(num_points * dimension_);
+    owner_cell_element->TransformToPhyCoords(owner_type, num_points,
+                                             &ref_points[0], &phy_points[0]);
+    owner_cell_jacobian->TransformToPhyCoords(num_points, &phy_points[0],
+                                              &quad_points[0]);
+
+    quad_weights.resize(num_points);
+    const double* normal = owner_cell_element->GetFacetypeNormal(owner_type);
+    std::vector<double> cofactor(num_points * dimension_ * dimension_);
+    owner_cell_jacobian->CalJacobianCofMat(num_points, &phy_points[0],
+                                           &cofactor[0]);
+
+    const Element* bdry_element = DENEB_ELEMENT->GetElement(bdry_elemtype);
+    const double area_ratio = owner_cell_element->GetFacetypeArea(owner_type) /
+                              bdry_element->GetVolume();
+    quad_normal.resize(num_points * dimension_);
+    for (int ipoint = 0; ipoint < num_points; ipoint++) {
+      gemvAx(1.0, &cofactor[ipoint * dimension_ * dimension_], dimension_,
+             normal, 1, 0.0, &quad_normal[ipoint * dimension_], 1, dimension_,
+             dimension_);
+      quad_weights[ipoint] =
+          avocado::VecLength(dimension_, &quad_normal[ipoint * dimension_]) *
+          ref_weights[ipoint] * area_ratio;
+    }
+
+    neighbor_quad_points = quad_points;
+    for (int ipoint = 0; ipoint < num_points; ipoint++)
+      for (int idim = 0; idim < dimension_; idim++)
+        neighbor_quad_points[ipoint * dimension_ + idim] += offset[idim];
+
+    const int num_quad_points = static_cast<int>(quad_weights.size());
+    double area = 0.0;
+    for (auto&& weight : quad_weights) area += weight;
+
+    num_peribdry_quad_points_[ibdry] = num_quad_points;
+    peribdry_area_[ibdry] = area;
+    peribdry_quad_weights_[ibdry] = std::move(quad_weights);
+
+      std::vector<double> owner_basis_value(num_quad_points * num_bases_);
+    std::vector<double> neighbor_basis_value(num_quad_points * num_bases_);
+    cell_basis_[owner_index]->GetBasis(num_quad_points, &quad_points[0],
+                                       &owner_basis_value[0]);
+    cell_basis_[neighbor_index]->GetBasis(
+        num_quad_points, &neighbor_quad_points[0], &neighbor_basis_value[0]);
+
+    peribdry_quad_owner_basis_value_[ibdry] = std::move(owner_basis_value);
+    peribdry_quad_neighbor_basis_value_[ibdry] =
+        std::move(neighbor_basis_value);
+  }
+
+  CombineData(face_owner_cell_, peribdry_owner_cell_, rules);
+  CombineData(face_neighbor_cell_, peribdry_neighbor_cell_, rules);
+  CombineData(face_owner_type_, peribdry_owner_type_, rules);
+  CombineData(face_neighbor_type_, peribdry_neighbor_type_, rules);
+
+  CombineData(num_face_quad_points_, num_peribdry_quad_points_, rules);
+  CombineData(face_area_, peribdry_area_, rules);
+  CombineData(face_quad_owner_basis_value_, peribdry_quad_owner_basis_value_,
+              rules);
+  CombineData(face_quad_neighbor_basis_value_,
+              peribdry_quad_neighbor_basis_value_, rules);
+  CombineData(face_quad_weights_, peribdry_quad_weights_, rules);
+
+  for (int i = num_inner_faces_; i < num_faces_; i++)
+    face_neighbor_cell_[i] -= num_cells_;
+}
 void Data::BuildCellData(const int icell) {
   const ElemType& elemtype = cell_elemtype_[icell];
   const int& elemorder = cell_order_[icell];
@@ -244,6 +504,16 @@ void Data::BuildCellData(const int icell) {
     avocado::VecCopy(num_nodes, &cell_subnode_ind_[cell_subnode_ptr_[icell]],
                      &node_coords_[0], dimension_, &sub_coords[0], dimension_);
     cell_jacobians_[icell]->SetTopology(elemorder, &sub_coords[0]);
+
+    for (int idim = 0; idim < dimension_; idim++) {
+      cell_center_coords_[icell * dimension_ + idim] = 0.0;
+      for (int inode = 0; inode < num_nodes; inode++) {
+        cell_center_coords_[icell * dimension_ + idim] +=
+            sub_coords[inode * dimension_ + idim];
+      }
+      cell_center_coords_[icell * dimension_ + idim] /=
+          static_cast<double>(num_nodes);
+    }
   }
 
   double volume = 0.0;
@@ -264,7 +534,7 @@ void Data::BuildCellData(const int icell) {
     cell_jacobians_[icell]->CalJacobianDet(num_points, &ref_points[0],
                                            &jacobian_det[0]);
     for (int ipoint = 0; ipoint < num_points; ipoint++)
-      quad_weights[ipoint] *= std::abs(jacobian_det[ipoint]);
+      quad_weights[ipoint] *= jacobian_det[ipoint];
     std::vector<double> quad_points(num_points * dimension_);
     cell_jacobians_[icell]->TransformToPhyCoords(num_points, &ref_points[0],
                                                  &quad_points[0]);
@@ -310,7 +580,7 @@ void Data::BuildCellData(const int icell) {
     std::vector<double> jacobian_det(num_points);
     jacobian->CalJacobianDet(num_points, &ref_points[0], &jacobian_det[0]);
     for (int ipoint = 0; ipoint < num_points; ipoint++)
-      quad_weights[ipoint] *= std::abs(jacobian_det[ipoint]);
+      quad_weights[ipoint] *= jacobian_det[ipoint];
     std::vector<double> quad_points(num_points * dimension_);
     jacobian->TransformToPhyCoords(num_points, &ref_points[0], &quad_points[0]);
     flux_basis->ComputeConnectingMatrix(volume_flux_order_, quad_points,
@@ -362,7 +632,7 @@ void Data::BuildCellData(const int icell) {
     cell_jacobians_[icell]->CalJacobianDet(num_points, &ref_points[0],
                                            &jacobian_det[0]);
     for (int ipoint = 0; ipoint < num_points; ipoint++)
-      quad_weights[ipoint] *= std::abs(jacobian_det[ipoint]);
+      quad_weights[ipoint] *= jacobian_det[ipoint];
     quad_points.resize(num_points * dimension_);
     cell_jacobians_[icell]->TransformToPhyCoords(num_points, &ref_points[0],
                                                  &quad_points[0]);
@@ -1192,7 +1462,7 @@ void Data::GetCellQuadrature(const int icell, const int order,
   cell_jacobians_[icell]->CalJacobianDet(num_points, &ref_points[0],
                                          &jacobian_det[0]);
   for (int ipoint = 0; ipoint < num_points; ipoint++)
-    quad_weights[ipoint] *= std::abs(jacobian_det[ipoint]);
+    quad_weights[ipoint] *= jacobian_det[ipoint];
   quad_points.resize(num_points * dimension_);
   cell_jacobians_[icell]->TransformToPhyCoords(num_points, &ref_points[0],
                                                &quad_points[0]);

@@ -42,6 +42,16 @@
 #define STOP_CONTROL_VALUE "Stop.1"
 #define MAX_ITERATION "MaxIter"
 
+#define NEWTON_ERROR_TOL "Newton.0"
+#define NEWTON_MAX_ITERATION "Newton.1"
+
+#define JACOBIAN_RECOMPUTE_TOL "JacobianRecompute.0"
+#define JACOBIAN_RECOMPUTE_ITERATION "JacobianRecompute.1"
+
+#define ROLL_BACK_BUFFER_SIZE "RollBack.0"
+#define ROLL_BACK_MECHANISM "RollBack.1"
+#define ROLL_BACK_MECHANISM_INPUT_I(i) "RollBack." + std::to_string(i + 2)
+
 #define LIMITER "Limiter"
 #define PRESSUREFIX "Pressurefix"
 
@@ -49,6 +59,14 @@
 #define ARTIFICIAL_VISCOSITY "ArtificialViscosity"
 #define PECLET ARTIFICIAL_VISCOSITY ".1"
 #define KAPPA ARTIFICIAL_VISCOSITY ".2"
+// shock-capturing PID
+#define S_GAIN ARTIFICIAL_VISCOSITY ".1"
+#define P_GAIN ARTIFICIAL_VISCOSITY ".2"
+#define I_GAIN ARTIFICIAL_VISCOSITY ".3"
+#define D_GAIN ARTIFICIAL_VISCOSITY ".4"
+#define DUCROS_SWITCH ARTIFICIAL_VISCOSITY ".5"
+
+#define SHOCK_CAPTURING_FREEZE_ITERATION "ShockCapturingFreezeIter"
 
 // gmsh grid generation
 #define GEN_GMSH_LEFT(direction) \
@@ -96,3 +114,6 @@
 // problem
 #define PROBLEM_INPUT "ProblemInput"
 #define PROBLEM_INPUT_I(i) PROBLEM_INPUT "." + std::to_string(i)
+
+// source
+#define SOURCE "Source"

@@ -11,6 +11,7 @@
 #include "deneb_timescheme_rosenbrock.h"
 #include "deneb_timescheme_ssprk.h"
 #include "deneb_timescheme_steady.h"
+#include "deneb_timescheme_esdirk.h"
 
 namespace deneb {
 bool Interrupt::CheckIterationFinish(const int iteration) {
@@ -76,7 +77,11 @@ std::shared_ptr<Timescheme> Timescheme::GetTimescheme(const std::string& name) {
     return std::make_shared<TimeschemeRODAS5>();
   else if (!name.compare("ROW6A") || !name.compare("ROSEN66"))
     return std::make_shared<TimeschemeROW6A>();
-  else if (!name.compare("Steady"))
+  else if (!name.compare("ESDIRK3") || !name.compare("ESDIRK3"))
+    return std::make_shared<TimeschemeESDIRK3>();
+  else if (!name.compare("ESDIRK4") || !name.compare("ESDIRK4"))
+    return std::make_shared<TimeschemeESDIRK4>();
+  else if (!name.compare("Steady")) 
     return std::make_shared<TimeschemeSteady>();
   ERROR_MESSAGE("Wrong time scheme (no-exist):" + name + "\n");
   return nullptr;

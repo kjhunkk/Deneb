@@ -13,13 +13,24 @@ int main(int argc, char* argv[]) {
   avocado::AVOCADO_Initialize(argc, argv, codename.c_str(), add_argv);
   deneb::DENEB_Initialize();
 
+   if (MYRANK == MASTER_NODE) {
+    const auto& argument = AVOCADO_ARGUMENT;
+    const auto& config = AVOCADO_CONFIG;
+    const std::string return_dir =
+        config->GetConfigValue(RETURN_DIR) + RETURN_CONFIG_DIR;
+    avocado::MakeDirectory(return_dir);
+    for (auto&& config_file_path :
+    argument->GetArguments(AVOCADO_CONFIG_PATH))
+     avocado::CopyFileTo(config_file_path, return_dir);
+  }
+
   // build data (BE AWARE the dependency)
   DENEB_DATA->BuildData();
   DENEB_EQUATION->BuildData();
   DENEB_TIMESCHEME->BuildData();
   DENEB_CONTOUR->BuildData();
-  DENEB_LIMITER->BuildData();             
-  DENEB_PRESSUREFIX->BuildData();         
+  DENEB_LIMITER->BuildData();
+  DENEB_PRESSUREFIX->BuildData();
   DENEB_ARTIFICIAL_VISCOSITY->BuildData();
   AVOCADO_MEMORY_PROFILER->PrintMemoryUsage();
 

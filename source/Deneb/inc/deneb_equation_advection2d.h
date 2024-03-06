@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -8,28 +9,26 @@
 
 #include "deneb_equation.h"
 
-// 2-D Euler equations
+// 2-D linear advection equation
 
 namespace deneb {
-class ProblemEuler2D;
-class BoundaryEuler2D;
+class ProblemAdvection2D;
+class BoundaryAdvection2D;
 
 // ------------------------------- Constants ------------------------------- //
-class ConstantsEuler2D {
+class ConstantsAdvection2D {
  protected:
   static constexpr int D_ = 2;
-  static constexpr int S_ = 4;
+  static constexpr int S_ = 1;
   static constexpr int DS_ = D_ * S_;
   static constexpr int SS_ = S_ * S_;
   static constexpr int DSS_ = DS_ * S_;
   static constexpr int DDSS_ = D_ * DSS_;
 
-  const double r_;
-  const double r_inv_;
-  const double rm1_;
-  const double rm1_inv_;
-
-  const double pi_ = 4.0 * std::atan(1.0);
+  // Advection velocity
+  double U_;
+  double V_;
+  double Speed_;
 
   int max_num_points_;
   int max_num_cell_points_;
@@ -37,33 +36,30 @@ class ConstantsEuler2D {
   int max_num_bdry_points_;
 
  public:
-  ConstantsEuler2D();
-  virtual ~ConstantsEuler2D(){};
+  ConstantsAdvection2D();
+  virtual ~ConstantsAdvection2D(){};
 
   inline int GetMaxNumBdryPoints() const { return max_num_bdry_points_; };
-
- protected:
-  double ComputePressure(const double* sol) const;
-  double ComputeTotalEnergy(const double* pri) const;
 };
 
 // ------------------------------- Equation -------------------------------- //
-class EquationEuler2D : public Equation, public ConstantsEuler2D {
+class EquationAdvection2D : public Equation, public ConstantsAdvection2D {
  private:
-  std::shared_ptr<ProblemEuler2D> problem_;
-  void (EquationEuler2D::*compute_numflux_)(const int num_points,
-                                            std::vector<double>& flux,
-                                            FACE_INPUTS);
-  void (EquationEuler2D::*compute_numflux_jacobi_)(const int num_points,
-                                                   FACE_JACOBI_OUTPUTS,
-                                                   FACE_INPUTS);
+  std::shared_ptr<ProblemAdvection2D> problem_;
+  void (EquationAdvection2D::*compute_numflux_)(const int num_points,
+                                                std::vector<double>& flux,
+                                                FACE_INPUTS);
+  void (EquationAdvection2D::*compute_numflux_jacobi_)(const int num_points,
+                                                       FACE_JACOBI_OUTPUTS,
+                                                       FACE_INPUTS);
 
-  std::unordered_map<int, std::shared_ptr<BoundaryEuler2D>> boundary_registry_;
-  std::vector<std::shared_ptr<BoundaryEuler2D>> boundaries_;
+  std::unordered_map<int, std::shared_ptr<BoundaryAdvection2D>>
+      boundary_registry_;
+  std::vector<std::shared_ptr<BoundaryAdvection2D>> boundaries_;
 
  public:
-  EquationEuler2D();
-  virtual ~EquationEuler2D();
+  EquationAdvection2D();
+  virtual ~EquationAdvection2D();
 
   virtual void RegistBoundary(const std::vector<int>& bdry_tag);
   virtual void BuildData(void);
@@ -97,11 +93,17 @@ class EquationEuler2D : public Equation, public ConstantsEuler2D {
   virtual bool IsContact(const int& icell,
                          const std::vector<int>& neighbor_cells,
                          const double* solution,
-                         const double* total_solution) const;
+                         const double* total_solution) const {
+    return false;
+  };
   virtual double ComputeMaxCharacteristicSpeed(
-      const double* input_solution) const;
+      const double* input_solution) const {
+    return Speed_;
+  };
   virtual const std::vector<double>& ComputePressureFixValues(
-      const double* input_solution);
+      const double* input_solution) {
+    return std::vector<double>();
+  };
 
   void ComputeComFlux(const int num_points, std::vector<double>& flux,
                       const int icell, const std::vector<double>& owner_u,
@@ -126,24 +128,24 @@ class EquationEuler2D : public Equation, public ConstantsEuler2D {
         normal);
   };
 
-  DEFINE_FLUX(LLF);
-  DEFINE_FLUX(Roe);
+  DEFINE_FLUX(Upwind);
 };
 
 // ------------------------------- Boundary -------------------------------- //
-class BoundaryEuler2D : public ConstantsEuler2D {
+class BoundaryAdvection2D : public ConstantsAdvection2D {
  public:
-  static std::shared_ptr<BoundaryEuler2D> GetBoundary(
-      const std::string& type, const int bdry_tag, EquationEuler2D* equation);
+  static std::shared_ptr<BoundaryAdvection2D> GetBoundary(
+      const std::string& type, const int bdry_tag,
+      EquationAdvection2D* equation);
 
  protected:
   int bdry_tag_;
-  EquationEuler2D* equation_;
+  EquationAdvection2D* equation_;
 
  public:
-  BoundaryEuler2D(const int bdry_tag, EquationEuler2D* equation)
+  BoundaryAdvection2D(const int bdry_tag, EquationAdvection2D* equation)
       : bdry_tag_(bdry_tag), equation_(equation){};
-  virtual ~BoundaryEuler2D(){};
+  virtual ~BoundaryAdvection2D(){};
 
   virtual void ComputeBdrySolution(
       const int num_points, std::vector<double>& bdry_u,
@@ -167,190 +169,45 @@ class BoundaryEuler2D : public ConstantsEuler2D {
                                      const std::vector<double>& coords,
                                      const double& time) = 0;
 };
-// Boundary = Wall
-// Dependency: -
-class WallEuler2D : public BoundaryEuler2D {
- public:
-  WallEuler2D(const int bdry_tag, EquationEuler2D* equation);
-  virtual ~WallEuler2D() {}
-
-  BOUNDARY_METHODS;
-};
-// Boundary = Riemann
-// Dependency: Ma, AOA
-class RiemannEuler2D : public BoundaryEuler2D {
- private:
-  double Ma_;
-  double AoA_;  // degree
-  double uf_;
-  double vf_;
-
- public:
-  RiemannEuler2D(const int bdry_tag, EquationEuler2D* equation);
-  virtual ~RiemannEuler2D() {}
-
-  BOUNDARY_METHODS;
-};
-// Boundary = Constant
-// Dependency: BdryInput(num)
-// BdryInput(num) = rho, rhoU, rhoV, rhoE
-class ConstantBdryEuler2D : public BoundaryEuler2D {
- private:
-  std::vector<double> values_;
-
- public:
-  ConstantBdryEuler2D(const int bdry_tag, EquationEuler2D* equation);
-  virtual ~ConstantBdryEuler2D() {}
-
-  BOUNDARY_METHODS;
-};
-// Boundary = SupersonicInflow
-// Dependency: BdryInput(num)
-// BdryInput(num) = Ma, rho, p/pinf, AoA
-class SupersonicInflowBdryEuler2D : public BoundaryEuler2D {
- private:
-  double Ma_;
-  double rho_;
-  double p_over_pinf_;
-  double AoA_;  // degree
-  double uf_;
-  double vf_;
-
- public:
-  SupersonicInflowBdryEuler2D(const int bdry_tag, EquationEuler2D* equation);
-  virtual ~SupersonicInflowBdryEuler2D(){};
-
-  BOUNDARY_METHODS;
-};
-// Boundary = BackPressure
-// Dependency: BdryInput(num)
-// BdryInput(num) = p/pinf
-class BackPressureBdryEuler2D : public BoundaryEuler2D {
- private:
-  double p_over_pinf_;
-
- public:
-  BackPressureBdryEuler2D(const int bdry_tag, EquationEuler2D* equation);
-  virtual ~BackPressureBdryEuler2D(){};
-
-  BOUNDARY_METHODS;
-};
 
 // -------------------------------- Problem -------------------------------- //
-class ProblemEuler2D : public ConstantsEuler2D {
+class ProblemAdvection2D : public ConstantsAdvection2D {
  public:
-  static std::shared_ptr<ProblemEuler2D> GetProblem(const std::string& name);
+  static std::shared_ptr<ProblemAdvection2D> GetProblem(
+      const std::string& name);
 
-  ProblemEuler2D() : ConstantsEuler2D(){};
-  virtual ~ProblemEuler2D(){};
+  ProblemAdvection2D() : ConstantsAdvection2D(){};
+  virtual ~ProblemAdvection2D(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,
                        const double time = 0.0) const = 0;
 };
-// Problem = Constant
-// ProblemInput = "Primitive" or "Conservative", value 1, ... , value 4
-class ConstantEuler2D : public ProblemEuler2D {
- private:
-  std::vector<double> values_;
-
- public:
-  ConstantEuler2D();
-  virtual ~ConstantEuler2D(){};
-
-  virtual void Problem(const int num_points, std::vector<double>& solutions,
-                       const std::vector<double>& coord,
-                       const double time = 0.0) const;
-};
-// Problem = FreeStream
-// ProblemInput = Ma, AOA
-class FreeStreamEuler2D : public ProblemEuler2D {
- private:
-  double Ma_;
-  double AoA_;  // degree
-  double uf_;
-  double vf_;
-
- public:
-  FreeStreamEuler2D();
-  virtual ~FreeStreamEuler2D(){};
-
-  virtual void Problem(const int num_points, std::vector<double>& solutions,
-                       const std::vector<double>& coord,
-                       const double time = 0.0) const;
-};
 // Problem = DoubleSine
 // ProblemInput = -
-class DoubleSineEuler2D : public ProblemEuler2D {
+class DoubleSineAdvection2D : public ProblemAdvection2D {
  private:
-  std::vector<double> velocity_;
   std::vector<double> wave_number_;
 
  public:
-  DoubleSineEuler2D();
-  virtual ~DoubleSineEuler2D(){};
+  DoubleSineAdvection2D();
+  virtual ~DoubleSineAdvection2D(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,
                        const double time = 0.0) const;
 };
-// Problem = ShockTube
-// ProblemInput = x-split,
-//                left_rho, left_rhoU, left_rhoE,
-//                right_rho, right_rhoU, right_rhoE
-class ShockTubeEuler2D : public ProblemEuler2D {
- private:
-  double split_;
-  std::vector<double> left_values_;
-  std::vector<double> right_values_;
-
- public:
-  ShockTubeEuler2D();
-  virtual ~ShockTubeEuler2D(){};
-
-  virtual void Problem(const int num_points, std::vector<double>& solutions,
-                       const std::vector<double>& coord,
-                       const double time = 0.0) const;
-};
-// Problem = ShockVortex
+// Problem = SquareWave
 // ProblemInput = -
-// target time = 0.7
-class ShockVortexEuler2D : public ProblemEuler2D {
+class SquareWaveAdvection2D : public ProblemAdvection2D {
  private:
-  double Ms_, Mv_;
-  double a_, a2_;
-  double b_, b2_;
-  double xv_, yv_;
-  double split_;
-
-  double vm_;
-  double rho1_, u1_, p1_;
-  double rho2_, u2_, p2_;
+  std::vector<double> x_edge_;
+  std::vector<double> y_edge_;
 
  public:
-  ShockVortexEuler2D();
-  virtual ~ShockVortexEuler2D(){};
+  SquareWaveAdvection2D();
+  virtual ~SquareWaveAdvection2D(){};
 
-  virtual void Problem(const int num_points, std::vector<double>& solutions,
-                       const std::vector<double>& coord,
-                       const double time = 0.0) const;
-};
-// Problem = IsentropicVortex
-// ProblemInput = -
-// target time = n*period
-class IsentropicVortexEuler2D : public ProblemEuler2D {
- private:
-  double vortex_strength_;
-  double x0_;
-  double y0_;
-  double lx_;
-  double ly_;
-  std::vector<double> x0_list_;
-  std::vector<double> y0_list_;
-
- public:
-  IsentropicVortexEuler2D();
-  virtual ~IsentropicVortexEuler2D(){};
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,
                        const double time = 0.0) const;

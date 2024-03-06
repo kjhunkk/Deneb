@@ -13,6 +13,9 @@ class TimeschemeSSPRK : public Timescheme {
   std::vector<double> rhs_;
   std::vector<double> u_;
 
+  double cost_update_solution_;
+  double cost_shock_capturing_;
+
  public:
   TimeschemeSSPRK();
   virtual ~TimeschemeSSPRK();
@@ -21,7 +24,7 @@ class TimeschemeSSPRK : public Timescheme {
   virtual void Marching(void);
 
 protected:
-  virtual void UpdateSolution(double* solution, const double t,
+  virtual bool UpdateSolution(double* solution, const double t,
                               const double dt) = 0;
 };
 
@@ -35,7 +38,7 @@ class TimeschemeSSPRK11 : public TimeschemeSSPRK {
   virtual void Marching(void);
 
  protected:
-  virtual void UpdateSolution(double* solution, const double t,
+  virtual bool UpdateSolution(double* solution, const double t,
                               const double dt);
 };
 
@@ -52,7 +55,7 @@ class TimeschemeSSPRK33 : public TimeschemeSSPRK {
   virtual void Marching(void);
 
  protected:
-  virtual void UpdateSolution(double* solution, const double t,
+  virtual bool UpdateSolution(double* solution, const double t,
                               const double dt);
 };
 
@@ -71,7 +74,7 @@ class TimeschemeSSPRK54 : public TimeschemeSSPRK {
   virtual void Marching(void);
 
  protected:
-  virtual void UpdateSolution(double* solution, const double t,
+  virtual bool UpdateSolution(double* solution, const double t,
                               const double dt);
 };
 }  // namespace deneb

@@ -135,4 +135,16 @@ int GMRES::Solve(const Mat& A, const Vec& b, Vec& solution) {
   KSPSolve(krylov_solver_, b, solution);
   return GetIterationNumber();
 }
+void GMRES::DoubleSearchDirection() {
+  const auto& config = AVOCADO_CONFIG;
+  const int num_search_direction =
+      std::stoi(config->GetConfigValue(GMRES_SEARCH_DIRECTION));
+  KSPGMRESSetRestart(krylov_solver_, 2 * num_search_direction);
+}
+void GMRES::ResetSearchDirection() {
+  const auto& config = AVOCADO_CONFIG;
+  const int num_search_direction =
+      std::stoi(config->GetConfigValue(GMRES_SEARCH_DIRECTION));
+  KSPGMRESSetRestart(krylov_solver_, num_search_direction);
+}
 }  // namespace deneb

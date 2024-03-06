@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "deneb_rollback.h"
+
 #define DENEB_TIMESCHEME_NAME timescheme_global_ptr
 #define DENEB_TIMESCHEME deneb::DENEB_TIMESCHEME_NAME
 #define DENEB_TIMESCHEME_INITIALIZE(name) \
@@ -75,6 +77,8 @@ class Timescheme {
   std::vector<double> solution_;
   std::vector<double> local_timestep_;
   double computing_cost_;
+
+  std::shared_ptr<RollBack> roll_back_;
 
  public:
   Timescheme(const bool is_implicit);

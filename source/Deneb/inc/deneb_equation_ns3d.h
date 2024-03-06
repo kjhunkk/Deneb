@@ -187,6 +187,15 @@ class AdiabaticWallNS3D : public BoundaryNS3D {
 
   BOUNDARY_METHODS;
 };
+// Boundary = SlipWall
+// Dependency: -
+class SlipWallNS3D : public BoundaryNS3D {
+ public:
+  SlipWallNS3D(const int bdry_tag, EquationNS3D* equation);
+  virtual ~SlipWallNS3D() {}
+
+  BOUNDARY_METHODS;
+};
 // Boundary = Riemann
 // Dependency: Ma, AOA, sideslip
 class RiemannNS3D : public BoundaryNS3D {
@@ -252,8 +261,11 @@ class DoubleSineNS3D : public ProblemNS3D {
                        const double time = 0.0) const;
 };
 // Problem = TaylorGreenVortex
-// ProblemInput = -
+// ProblemInput = Mach
 class TaylorGreenVortexNS3D : public ProblemNS3D {
+ private:
+  double Ma_;
+
  public:
   TaylorGreenVortexNS3D();
   virtual ~TaylorGreenVortexNS3D(){};
