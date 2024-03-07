@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <memory>
+#include <string>
 
 #define DENEB_UTILITY_NAME utility_global_ptr
 #define DENEB_UTILITY deneb::DENEB_UTILITY_NAME
