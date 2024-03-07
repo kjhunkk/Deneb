@@ -218,8 +218,6 @@ bool TimeschemeSSPRK33::UpdateSolution(double* solution, const double t,
   DENEB_PRESSUREFIX->Execute(solution);
   DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(solution, dt);
 
-  cost_shock_capturing_ += STOP_TIMER_TAG("ShockCapturing");
-
   // SSPRK33 third stage
   if (roll_back_->Status() &&
       (ComputeGlobalTimestep(solution, local_timestep_) < 0.9 * dt))

@@ -13,9 +13,6 @@ class TimeschemeSSPRK : public Timescheme {
   std::vector<double> rhs_;
   std::vector<double> u_;
 
-  double cost_update_solution_;
-  double cost_shock_capturing_;
-
  public:
   TimeschemeSSPRK();
   virtual ~TimeschemeSSPRK();
