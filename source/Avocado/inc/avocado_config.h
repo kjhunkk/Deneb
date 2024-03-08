@@ -27,6 +27,8 @@ class Config {
   const std::string& GetConfigValue(const std::string& config_type,
                                     const int n);
   const std::string& GetConfigValue(const std::string& config_type);
+  bool IsConfigValue(const std::string& config_type, int n) const;
+  bool IsConfigValue(const std::string& config_type) const;
   void SetConfigValue(const std::string& config_str);
   void DeleteConfigValue(const std::string& config_type);
   void ReadConfigFile(const std::string& config_file_path);

@@ -36,6 +36,22 @@ const std::string& Config::GetConfigValue(const std::string& config_type) {
   return GetConfigValue(split[0], std::stoi(split[1]));
 }
 
+bool Config::IsConfigValue(const std::string& config_type, const int n) const {
+  const auto& iterator = configs_.find(config_type);
+  if (iterator == configs_.end())
+    return false;
+  if (iterator->second.size() <= n)
+    return false;
+  return true;
+}
+
+bool Config::IsConfigValue(const std::string& config_type) const {
+  std::string config_str = config_type;
+  if (config_str.find('.') == std::string::npos) config_str += ".0";
+  const std::vector<std::string> split = SplitString(config_str, '.');
+  return IsConfigValue(split[0], std::stoi(split[1]));
+}
+
 void Config::SetConfigValue(const std::string& config_str) {
   std::string config_type;
   std::vector<std::string> config_values;
