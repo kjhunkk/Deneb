@@ -82,6 +82,7 @@ class Equation {
   inline const int& GetDimension(void) const { return dimension_; };
   inline const int& GetNumStates(void) const { return num_states_; };
   inline bool GetSourceTerm(void) const { return source_term_; };
+  virtual inline bool GetMassMatrixFlag(void) const { return false; };
   inline const std::vector<std::string>& GetCellVariableNames(void) const {
     return cell_variable_names_;
   };

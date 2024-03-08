@@ -29,11 +29,21 @@ Data::Data() {
                  "\n");
   MASTER_MESSAGE("Surface flux order = " + std::to_string(surface_flux_order_) +
                  "\n");
+  mass_matrix_order_ = 0;
 };
 Data::~Data(){};
 
 void Data::BuildData(void) {
   has_source_term_ = DENEB_EQUATION->GetSourceTerm();
+  has_mass_matrix_ = DENEB_EQUATION->GetMassMatrixFlag();
+  if (has_mass_matrix_) {
+    auto& config = AVOCADO_CONFIG;
+    if (config->IsConfigValue(MASS_MATRIX_ORDER))
+      mass_matrix_order_ = std::stoi(config->GetConfigValue(MASS_MATRIX_ORDER));
+    else
+      MASTER_MESSAGE("Cannot find mass matrix order.");
+    MASTER_MESSAGE("Mass matrix order = " + std::to_string(mass_matrix_order_) + "\n");
+  }
 
   dimension_ = DENEB_EQUATION->GetDimension();
   std::shared_ptr<GridBuilder> grid = std::make_shared<GridBuilder>(dimension_);
@@ -83,7 +93,7 @@ void Data::BuildData(void) {
   cell_basis_value_.resize(num_cells_);
   cell_basis_grad_value_.resize(num_cells_);
   cell_coefficients_.resize(num_cells_);
-  if (has_source_term_) cell_source_coefficients_.resize(num_cells_);
+  if (has_source_term_ || has_mass_matrix_) cell_source_coefficients_.resize(num_cells_);
 
   for (int icell = 0; icell < num_total_cells_; icell++) BuildCellData(icell);
   SYNCRO();
@@ -622,7 +632,8 @@ void Data::BuildCellData(const int icell) {
   std::vector<double> quad_points, quad_weights;
   {
     int quad_order = volume_flux_order_ + order_ - 1;
-    if (has_source_term_) quad_order++;
+    if (has_source_term_ || has_mass_matrix_) quad_order++;
+    quad_order += mass_matrix_order_;
 
     std::vector<double> ref_points;
     flux_basis->GetBasisPolynomial()->GetVolumeQuadrature(
@@ -639,7 +650,7 @@ void Data::BuildCellData(const int icell) {
   }
 
   cell_coefficients_[icell].resize(num_DRM_points * num_bases_ * dimension_);
-  if (has_source_term_)
+  if (has_source_term_ || has_mass_matrix_)
     cell_source_coefficients_[icell].resize(num_DRM_points * num_bases_);
   {
     const int num_quad_points = static_cast<int>(quad_weights.size());
@@ -662,7 +673,7 @@ void Data::BuildCellData(const int icell) {
             &cell_coefficients_[icell][0], num_quad_points, num_DRM_points,
             num_bases_ * dimension_);
 
-    if (has_source_term_) {
+    if (has_source_term_ || has_mass_matrix_) {
       std::vector<double> basis_value(num_quad_points * num_bases_);
       cell_basis_[icell]->GetBasis(num_quad_points, &quad_points[0],
                                    &basis_value[0]);

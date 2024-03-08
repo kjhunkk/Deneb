@@ -24,10 +24,12 @@ class Data {
   int order_;
   int volume_flux_order_;
   int surface_flux_order_;
+  int mass_matrix_order_;
   int num_bases_;
 
   int dimension_;
   bool has_source_term_;
+  bool has_mass_matrix_;
 
   // node
   int num_global_nodes_;

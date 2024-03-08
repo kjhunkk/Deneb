@@ -10,6 +10,7 @@
 #define ORDER "Order"
 #define VOLUME_FLUX_ORDER "FluxOrder.0"
 #define SURFACE_FLUX_ORDER "FluxOrder.1"
+#define MASS_MATRIX_ORDER "MassMatrixOrder.0"
 #define GRID_FILE_FORMAT "Grid.0"
 #define GRID_FILE_PATH "Grid.1"
 
