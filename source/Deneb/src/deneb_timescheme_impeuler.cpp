@@ -93,7 +93,7 @@ void TimeschemeImpEuler::Marching(void) {
     cblas_dscal(length_, -1.0, rhs_ptr, 1);
     VecRestoreArray(rhs_, &rhs_ptr);
     DENEB_EQUATION->ComputeSystemMatrix(solution, sysmat_, t);
-    MatShift(sysmat_, 1.0 / dt);
+    DENEB_EQUATION->SystemMatrixShift(solution, sysmat_, dt, t);
 
     const int sub_iteration = solver_.Solve(sysmat_, rhs_, delta_);
 

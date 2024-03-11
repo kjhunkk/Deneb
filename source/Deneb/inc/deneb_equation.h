@@ -99,6 +99,12 @@ class Equation {
                             const double t) = 0;
   virtual void ComputeSystemMatrix(const double* solution, Mat& sysmat,
                                    const double t) = 0;
+  virtual void SystemMatrixShift(const double* solution, Mat& sysmat, 
+    const double dt, const double t) {
+    MatShift(sysmat, 1.0 / dt);
+  };
+  virtual void SystemMatrixShift(const double* solution, Mat& sysmat, 
+    const std::vector<double>& local_dt, const double t);
   virtual void GetCellPostSolution(const int icell, const int num_points,
                                    const std::vector<double>& solution,
                                    const std::vector<double>& solution_grad,

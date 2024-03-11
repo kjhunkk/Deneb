@@ -142,17 +142,7 @@ void TimeschemeSteady::Marching(void) {
     cblas_dscal(length_, -1.0, rhs_ptr, 1);
     VecRestoreArray(rhs_, &rhs_ptr);
     DENEB_EQUATION->ComputeSystemMatrix(solution, sysmat_, 0.0);
-    for (int icell = 0; icell < num_cells; icell++) {
-      memset(&block[0], 0, sb * sb * sizeof(double));
-      const double dt_factor = 1.0 / local_timestep_[icell];
-
-      for (int i = 0; i < sb * sb; i += (sb + 1)) block[i] = dt_factor;
-
-      MatSetValuesBlocked(sysmat_, 1, &mat_index[icell], 1, &mat_index[icell],
-                          &block[0], ADD_VALUES);
-    }
-    MatAssemblyBegin(sysmat_, MAT_FINAL_ASSEMBLY);
-    MatAssemblyEnd(sysmat_, MAT_FINAL_ASSEMBLY);
+    DENEB_EQUATION->SystemMatrixShift(solution, sysmat_, local_timestep_, 0.0);
 
     const int sub_iteration = solver_.Solve(sysmat_, rhs_, delta_);
 
