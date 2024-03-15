@@ -30,6 +30,10 @@ Data::Data() {
   MASTER_MESSAGE("Surface flux order = " + std::to_string(surface_flux_order_) +
                  "\n");
   mass_matrix_order_ = 0;
+  if (config->IsConfigValue(CHARACTERISTIC_LENGTH))
+    lc_ =
+        std::stod(config->GetConfigValue(CHARACTERISTIC_LENGTH));
+  else lc_ = 1.0;
 };
 Data::~Data(){};
 
@@ -612,7 +616,7 @@ void Data::BuildCellData(const int icell) {
     flux_basis->GetBasis(num_DRM_points, &DRM_points[0], &van_trans[0]);
     int num_ranks;
     avocado::MatPseudoInv(&van_trans[0], num_DRM_points, num_flux_bases,
-                          num_ranks, 1.0E-4);
+                          num_ranks, lc_ * 1.0E-4);
     if (num_ranks < num_flux_bases) ERROR_MESSAGE("Not full rank.\n");
     invvan_trans = std::move(van_trans);
   }
@@ -755,7 +759,7 @@ void Data::BuildFaceData(const int iface) {
     flux_basis->GetBasis(num_DRM_points, &DRM_points[0], &van_trans[0]);
     int num_ranks;
     avocado::MatPseudoInv(&van_trans[0], num_DRM_points, num_flux_bases,
-                          num_ranks, 1.0E-4);
+                          num_ranks, lc_ * 1.0E-4);
     if (num_ranks < num_flux_bases) {
       num_DRM_points++;
       continue;
@@ -944,7 +948,7 @@ void Data::BuildBdryData(const int ibdry) {
     flux_basis->GetBasis(num_DRM_points, &DRM_points[0], &van_trans[0]);
     int num_ranks;
     avocado::MatPseudoInv(&van_trans[0], num_DRM_points, num_flux_bases,
-                          num_ranks, 1.0E-4);
+                          num_ranks, lc_ * 1.0E-4);
     if (num_ranks < num_flux_bases) {
       num_DRM_points++;
       continue;
@@ -1153,7 +1157,7 @@ void Data::BuildPeribdryData(const int ibdry) {
     flux_basis->GetBasis(num_DRM_points, &DRM_points[0], &van_trans[0]);
     int num_ranks;
     avocado::MatPseudoInv(&van_trans[0], num_DRM_points, num_flux_bases,
-                          num_ranks, 1.0E-4);
+                          num_ranks, lc_ * 1.0E-4);
     if (num_ranks < num_flux_bases) {
       num_DRM_points++;
       continue;

@@ -28,6 +28,7 @@ class Data {
   int num_bases_;
 
   int dimension_;
+  double lc_; // characteristic length
   bool has_source_term_;
   bool has_mass_matrix_;
 

@@ -13,6 +13,7 @@
 #define MASS_MATRIX_ORDER "MassMatrixOrder.0"
 #define GRID_FILE_FORMAT "Grid.0"
 #define GRID_FILE_PATH "Grid.1"
+#define CHARACTERISTIC_LENGTH "CharacteristicLength.0"
 
 #define EQUATION "Equation.0"
 #define CONVECTIVE_FLUX "Equation.1"
