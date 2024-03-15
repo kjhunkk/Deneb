@@ -5,6 +5,7 @@
 #include "avocado_config.h"
 #include "avocado_config_macro.h"
 #include "avocado_dual_number.h"
+#include "avocado_dual_number_alloc.h"
 #include "avocado_file.h"
 #include "avocado_header.h"
 #include "avocado_memory_profiler.h"
