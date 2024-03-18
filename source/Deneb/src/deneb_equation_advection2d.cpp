@@ -59,6 +59,7 @@ EquationAdvection2D::EquationAdvection2D()
   MASTER_MESSAGE("Number of state variables = " + std::to_string(S_) + "\n");
   MASTER_MESSAGE(
       "Source term = " + std::string(source_term_ ? "true" : "false") + "\n");
+  ns_ = 1;
 
   auto& config = AVOCADO_CONFIG;
   problem_ = ProblemAdvection2D::GetProblem(config->GetConfigValue(PROBLEM));

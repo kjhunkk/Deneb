@@ -161,6 +161,7 @@ EquationEquilibriumNS2D::EquationEquilibriumNS2D()
   MASTER_MESSAGE("Number of state variables = " + std::to_string(S_) + "\n");
   MASTER_MESSAGE(
       "Source term = " + std::string(source_term_ ? "true" : "false") + "\n");
+  ns_ = 1;
 
   MASTER_MESSAGE("References\n");
   MASTER_MESSAGE("\tLength = " + std::to_string(L_ref_) + " m\n");

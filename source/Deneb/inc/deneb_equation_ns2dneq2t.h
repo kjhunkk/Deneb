@@ -33,7 +33,6 @@ class ConstantsNS2DNeq2T {
   static int ax_;  // axi-symmetric -> need check
 
   static std::shared_ptr<Neq2T::Mixture> mixture_;
-  static int ns_;
 
   static double T_eev_min_;
 

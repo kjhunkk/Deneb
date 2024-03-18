@@ -66,7 +66,6 @@ class NoArtificialViscosity : public ArtificialViscosity {
 // ArtificialViscosity = Peclet, kappa
 class LaplacianP0 : public ArtificialViscosity {
  protected:
-  int target_state_;
   int num_bases_m1_;  // num basis of P(n-1)
   double Peclet_;
   double kappa_;

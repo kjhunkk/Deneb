@@ -36,10 +36,8 @@ LaplacianP0::LaplacianP0() { MASTER_MESSAGE(avocado::GetTitle("LaplacianP0")); }
 void LaplacianP0::BuildData(void) {
   MASTER_MESSAGE(avocado::GetTitle("LaplacianP0::BuildData()"));
 
-  target_state_ = 0;
   const std::vector<std::string>& variable_names =
       DENEB_EQUATION->GetCellVariableNames();
-  MASTER_MESSAGE("Target state: " + variable_names[target_state_] + "\n");
 
   auto& config = AVOCADO_CONFIG;
   const std::string& equation = config->GetConfigValue(EQUATION);
@@ -118,12 +116,13 @@ void LaplacianP0::ComputeArtificialViscosity(const double* solution,
 }
 double LaplacianP0::SmoothnessIndicator(const double* solution) {
   static const int& num_bases = DENEB_DATA->GetNumBases();
-  const double Pn_value =
-      avocado::VecInnerProd(num_bases, &solution[target_state_ * num_bases],
-                            &solution[target_state_ * num_bases]);
-  const double Pn_minus_1_value =
-      avocado::VecInnerProd(num_bases_m1_, &solution[target_state_ * num_bases],
-                            &solution[target_state_ * num_bases]);
+  static const int& num_species = DENEB_EQUATION->GetNumSpecies();
+  static const int sb = num_bases * num_species;
+  const double Pn_value = avocado::VecInnerProd(sb, &solution[0], &solution[0]);
+  double Pn_minus_1_value = 0.0;
+  for (int i = 0; i < num_species; i++)
+    Pn_minus_1_value += avocado::VecInnerProd(
+        num_bases_m1_, &solution[i * num_bases], &solution[i * num_bases]);
 
   return std::log10((Pn_value - Pn_minus_1_value) / Pn_value);
 }
