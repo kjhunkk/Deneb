@@ -64,7 +64,7 @@ class Equation {
  protected:
   int dimension_;
   int num_states_;
-  int ns_; // the number of species
+  int num_species_;
   bool source_term_;
 
   std::vector<double> dt_auxiliary_;
@@ -82,7 +82,7 @@ class Equation {
 
   inline const int& GetDimension(void) const { return dimension_; };
   inline const int& GetNumStates(void) const { return num_states_; };
-  inline const int& GetNumSpecies(void) const { return ns_; };
+  inline const int& GetNumSpecies(void) const { return num_species_; };
   inline bool GetSourceTerm(void) const { return source_term_; };
   virtual inline bool GetMassMatrixFlag(void) const { return false; };
   inline const std::vector<std::string>& GetCellVariableNames(void) const {

@@ -136,7 +136,7 @@ EquationNS2D::EquationNS2D() : ConstantsNS2D(), Equation(D_, S_, false) {
   MASTER_MESSAGE("Number of state variables = " + std::to_string(S_) + "\n");
   MASTER_MESSAGE(
       "Source term = " + std::string(source_term_ ? "true" : "false") + "\n");
-  ns_ = 1;
+  num_species_ = 1;
 
   auto& config = AVOCADO_CONFIG;
   problem_ = ProblemNS2D::GetProblem(config->GetConfigValue(PROBLEM));

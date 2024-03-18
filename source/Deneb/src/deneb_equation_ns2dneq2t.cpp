@@ -59,8 +59,8 @@ ConstantsNS2DNeq2T::ConstantsNS2DNeq2T() {
     const std::string mixture_filename = config->GetConfigValue("MixtureFile");
     mixture_ = std::make_shared<Neq2T::Mixture>();
     mixture_->InitMixture(mixture_filename, "mixture", MYRANK == MASTER_NODE);
-    int ns = mixture_->GetNumSpecies();
-    S_ = ns + D_ + 2;
+    ns_ = mixture_->GetNumSpecies();
+    S_ = ns_ + D_ + 2;
     DS_ = D_ * S_;
     SS_ = S_ * S_;
     DSS_ = D_ * SS_;
@@ -88,12 +88,14 @@ EquationNS2DNeq2T::EquationNS2DNeq2T(bool axis)
   } else {
     MASTER_MESSAGE(avocado::GetTitle("EquationNS2DNeq2T"));
   }
-  ns_ = mixture_->GetNumSpecies();
+  num_species_ = ns_;
+
   MASTER_MESSAGE("Dimension = " + std::to_string(D_) + "\n");
   MASTER_MESSAGE("Number of state variables = " + std::to_string(S_) + "\n");
-  MASTER_MESSAGE("Number of species = " + std::to_string(ns_) + "\n");
+  MASTER_MESSAGE("Number of species = " + std::to_string(num_species_) + "\n");
   MASTER_MESSAGE(
       "Source term = " + std::string(source_term_ ? "true" : "false") + "\n");
+
 
   num_states_ = S_;
   dimension_ = D_;

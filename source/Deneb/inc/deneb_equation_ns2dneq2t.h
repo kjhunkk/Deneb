@@ -23,6 +23,7 @@ class BoundaryNS2DNeq2T;
 class ConstantsNS2DNeq2T {
  protected:
   static constexpr int D_ = 2;
+  static int ns_;
   static int S_;
   static int DS_;
   static int SS_;
