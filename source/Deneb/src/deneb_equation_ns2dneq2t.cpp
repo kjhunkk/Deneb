@@ -93,6 +93,9 @@ EquationNS2DNeq2T::EquationNS2DNeq2T(bool axis)
   MASTER_MESSAGE(
       "Source term = " + std::string(source_term_ ? "true" : "false") + "\n");
 
+  num_states_ = S_;
+  dimension_ = D_;
+
   auto& config = AVOCADO_CONFIG;
   problem_ = ProblemNS2DNeq2T::GetProblem(config->GetConfigValue(PROBLEM));
   const std::string& numflux = config->GetConfigValue(CONVECTIVE_FLUX);
@@ -336,30 +339,34 @@ void EquationNS2DNeq2T::ComputeLocalTimestep(
   static const auto& cell_proj_volumes = DENEB_DATA->GetCellProjVolumes();
   static const auto& cell_basis_value = DENEB_DATA->GetCellBasisValue();
 
-  static std::vector<double> rho(ns_);
+  static std::vector<double> d(ns_);
   for (int icell = 0; icell < num_cells; icell++) {
     const double& Vx = cell_proj_volumes[icell * D_];
     const double& Vy = cell_proj_volumes[icell * D_ + 1];
     const double* sol = &solution[icell * sb];
 
-    for (int i = 0; i < ns_; i++) rho[i] = sol[i * num_bases];
-    const double& u = sol[ns_];
-    const double& v = sol[ns_ + 1];
-    const double& T_tr = sol[ns_ + 2];
-    const double& T_eev = sol[ns_ + 3];
+    for (int i = 0; i < ns_; i++)
+      d[i] = sol[i * num_bases] * cell_basis_value[icell][0];
+    const double& u = sol[ns_ * num_bases] * cell_basis_value[icell][0];
+    const double& v = sol[(ns_ + 1) * num_bases] * cell_basis_value[icell][0];
+    const double& T_tr =
+        sol[(ns_ + 2) * num_bases] * cell_basis_value[icell][0];
+    const double& T_eev =
+        sol[(ns_ + 3) * num_bases] * cell_basis_value[icell][0];
 
-    mixture_->SetDensity(&rho[0]);
-    const double d = mixture_->GetTotalDensity();
+    mixture_->SetDensity(&d[0]);
+    const double mixture_d = mixture_->GetTotalDensity();
 
     const double beta = mixture_->GetBeta(T_tr);
-    const double p = mixture_->GetPressure(T_tr, T_eev);
-    const double a = std::sqrt((1.0 + beta) * p / d);
+    const double mixture_p = mixture_->GetPressure(T_tr, T_eev);
+    const double a = std::sqrt((1.0 + beta) * mixture_p / mixture_d);
 
     const double mu = mixture_->GetViscosity(T_tr, T_eev);
     const double max_visradii = 4.0 / 3.0 * mu;
-    const double AVcoeff =
+    const double arvis =
         DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(icell, 0);
-    const double factor = (max_visradii / d + AVcoeff) * dt_auxiliary_[icell];
+    const double factor =
+        (max_visradii / mixture_d + arvis) * dt_auxiliary_[icell];
 
     local_timestep[icell] =
         cell_volumes[icell] /
@@ -1231,7 +1238,7 @@ void EquationNS2DNeq2T::ComputeComFlux(const int num_points,
   double arvis = 0.0;
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_SOLUTION_PS(, owner_u);
-    GET_SOLUTION_GRAD_PDS(, owner_u);
+    GET_SOLUTION_GRAD_PDS(, owner_div_u);
     arvis =
         DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(icell, ipoint);
 
@@ -1370,7 +1377,7 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
       const double& T_tr = owner_u[ind++];
       const double& T_eev = owner_u[ind++];
 
-      GET_SOLUTION_GRAD_PDS(, owner_u);
+      GET_SOLUTION_GRAD_PDS(, owner_div_u);
       arvis = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(icell,
                                                                       ipoint);
 
@@ -1555,15 +1562,15 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
         mixture_dy = mixture_dy + dy[i];
       }
 
-      std::vector<aDual> Isx(ns_, aDual(S_));
-      std::vector<aDual> Isy(ns_, aDual(S_));
+      std::vector<aDual> Isx(ns_, aDual(DS_));
+      std::vector<aDual> Isy(ns_, aDual(DS_));
       for (int i = 0; i < ns_; i++) {
         Isx[i] = -Ds[i] * (dx[i] - Y[i] * mixture_dx);
         Isy[i] = -Ds[i] * (dy[i] - Y[i] * mixture_dy);
       }
 
-      aDual Ix_sum(S_);
-      aDual Iy_sum(S_);
+      aDual Ix_sum(DS_);
+      aDual Iy_sum(DS_);
       for (const int& idx : hidx) {
         Ix_sum = Ix_sum + Isx[idx];
         Iy_sum = Iy_sum + Isy[idx];
@@ -2370,15 +2377,15 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
           mixture_dy_o = mixture_dy_o + dy_o[i];
         }
 
-        std::vector<aDual> Isx_o(ns_, aDual(S_));
-        std::vector<aDual> Isy_o(ns_, aDual(S_));
+        std::vector<aDual> Isx_o(ns_, aDual(DS_));
+        std::vector<aDual> Isy_o(ns_, aDual(DS_));
         for (int i = 0; i < ns_; i++) {
           Isx_o[i] = -Ds[i] * (dx_o[i] - Y_o[i] * mixture_dx_o);
           Isy_o[i] = -Ds[i] * (dy_o[i] - Y_o[i] * mixture_dy_o);
         }
 
-        aDual Ix_sum_o(S_);
-        aDual Iy_sum_o(S_);
+        aDual Ix_sum_o(DS_);
+        aDual Iy_sum_o(DS_);
         for (const int& idx : hidx) {
           Ix_sum_o = Ix_sum_o + Isx_o[idx];
           Iy_sum_o = Iy_sum_o + Isy_o[idx];
@@ -2784,15 +2791,15 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
           mixture_dy_n = mixture_dy_n + dy_n[i];
         }
 
-        std::vector<aDual> Isx_n(ns_, aDual(S_));
-        std::vector<aDual> Isy_n(ns_, aDual(S_));
+        std::vector<aDual> Isx_n(ns_, aDual(DS_));
+        std::vector<aDual> Isy_n(ns_, aDual(DS_));
         for (int i = 0; i < ns_; i++) {
           Isx_n[i] = -Ds[i] * (dx_n[i] - Y_n[i] * mixture_dx_n);
           Isy_n[i] = -Ds[i] * (dy_n[i] - Y_n[i] * mixture_dy_n);
         }
 
-        aDual Ix_sum_n(S_);
-        aDual Iy_sum_n(S_);
+        aDual Ix_sum_n(DS_);
+        aDual Iy_sum_n(DS_);
         for (const int& idx : hidx) {
           Ix_sum_n = Ix_sum_n + Isx_n[idx];
           Iy_sum_n = Iy_sum_n + Isy_n[idx];
@@ -3097,7 +3104,7 @@ void SlipWallNS2DNeq2T::ComputeBdryFluxJacobi(
       const double& T_tr = owner_u[ind++];
       const double& T_eev = owner_u[ind++];
 
-      GET_SOLUTION_GRAD_PDS(, owner_u);
+      GET_SOLUTION_GRAD_PDS(, owner_div_u);
 
       // Convective flux
       mixture_->SetDensity(&owner_u[S_ * ipoint]);
@@ -3251,15 +3258,15 @@ void SlipWallNS2DNeq2T::ComputeBdryFluxJacobi(
         mixture_dy = mixture_dy + dy[i];
       }
 
-      std::vector<aDual> Isx(ns_, aDual(S_));
-      std::vector<aDual> Isy(ns_, aDual(S_));
+      std::vector<aDual> Isx(ns_, aDual(DS_));
+      std::vector<aDual> Isy(ns_, aDual(DS_));
       for (int i = 0; i < ns_; i++) {
         Isx[i] = -Ds[i] * (dx[i] - Y[i] * mixture_dx);
         Isy[i] = -Ds[i] * (dy[i] - Y[i] * mixture_dy);
       }
 
-      aDual Ix_sum(S_);
-      aDual Iy_sum(S_);
+      aDual Ix_sum(DS_);
+      aDual Iy_sum(DS_);
       for (const int& idx : hidx) {
         Ix_sum = Ix_sum + Isx[idx];
         Iy_sum = Iy_sum + Isy[idx];
@@ -3334,11 +3341,11 @@ void SlipWallNS2DNeq2T::ComputeBdryFluxJacobi(
 IsothermalWallNS2DNeq2T::IsothermalWallNS2DNeq2T(const int bdry_tag,
                                                  EquationNS2DNeq2T* equation)
     : BoundaryNS2DNeq2T(bdry_tag, equation) {
-  MASTER_MESSAGE("IsothermalWall (tag=" + std::to_string(bdry_tag) +
-                 ")\n\tTwall = " + std::to_string(Twall_) + "\n");
-
   auto& config = AVOCADO_CONFIG;
   Twall_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 0)));
+
+  MASTER_MESSAGE("IsothermalWall (tag=" + std::to_string(bdry_tag) +
+                 ")\n\tTwall = " + std::to_string(Twall_) + "\n");
 }
 void IsothermalWallNS2DNeq2T::ComputeBdrySolution(
     const int num_points, std::vector<double>& bdry_u,
@@ -3575,7 +3582,7 @@ void IsothermalWallNS2DNeq2T::ComputeBdryFluxJacobi(
       aDual T_tr(S_, owner_u[ind++], ns_ + 2);
       aDual T_eev(S_, owner_u[ind], ns_ + 3);
 
-      GET_SOLUTION_GRAD_PDS(, owner_u);
+      GET_SOLUTION_GRAD_PDS(, owner_div_u);
 
       // Convective flux
       mixture_->SetDensity(&owner_u[S_ * ipoint]);
@@ -3593,14 +3600,14 @@ void IsothermalWallNS2DNeq2T::ComputeBdryFluxJacobi(
       std::vector<aDual> Y(ns_, aDual(S_));
       for (int i = 0; i < ns_; i++) {
         const double R = species[i]->GetSpecificGasConstant();
-        const auto Y = d[i] * mixture_d_inv;
-        sum = sum + Y * R * Twall_;
+        Y[i] = d[i] * mixture_d_inv;
+        sum = sum + Y[i] * R * Twall_;
       }
       const auto mixture_d_wall = mixture_p / sum;
       for (int i = 0; i < ns_; i++) d_new[i] = Y[i].f * mixture_d_wall.f;
       mixture_->SetDensity(&d_new[0]);
 
-      // Viscous flux // need check -> this assumes the dwall_ to be independent
+      // Viscous flux // need check -> this assumes the dwall_ to be independent / check useless computations
       // to solution variables
       const auto mu = mixture_->GetViscosity(Twall_, Twall_);
       const auto k_tr = mixture_->GetTransRotationConductivity(Twall_, Twall_);
@@ -3648,9 +3655,9 @@ void IsothermalWallNS2DNeq2T::ComputeBdryFluxJacobi(
         diffflux[eidx + ns_] = Mw_e * sum_y;
       }
 
-      const auto txx = c23_ * mu * (2.0 * ux - vy);
-      const auto txy = mu * (uy + vx);
-      const auto tyy = c23_ * mu * (2.0 * vy - ux);
+      const aDual txx(S_, c23_ * mu * (2.0 * ux - vy));
+      const aDual txy(S_, mu * (uy + vx));
+      const aDual tyy(S_, c23_ * mu * (2.0 * vy - ux));
 
       aDual Jh_x(S_);
       aDual Jh_y(S_);
@@ -3751,15 +3758,15 @@ void IsothermalWallNS2DNeq2T::ComputeBdryFluxJacobi(
         mixture_dy = mixture_dy + dy[i];
       }
 
-      std::vector<aDual> Isx(ns_, aDual(S_));
-      std::vector<aDual> Isy(ns_, aDual(S_));
+      std::vector<aDual> Isx(ns_, aDual(DS_));
+      std::vector<aDual> Isy(ns_, aDual(DS_));
       for (int i = 0; i < ns_; i++) {
         Isx[i] = -Ds[i] * (dx[i] - Y[i] * mixture_dx);
         Isy[i] = -Ds[i] * (dy[i] - Y[i] * mixture_dy);
       }
 
-      aDual Ix_sum(S_);
-      aDual Iy_sum(S_);
+      aDual Ix_sum(DS_);
+      aDual Iy_sum(DS_);
       for (const int& idx : hidx) {
         Ix_sum = Ix_sum + Isx[idx];
         Iy_sum = Iy_sum + Isy[idx];
@@ -3955,9 +3962,9 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdrySolution(
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     // ps
     ind = S_ * ipoint;
-    for (int i = 0; i < S_; i++) bdry_u[ind] = owner_u[ind++];
+    for (int i = 0; i < S_; i++) bdry_u[ind + i] = owner_u[ind + i];
     ind = DS_ * ipoint;
-    for (int i = 0; i < DS_; i++) bdry_div_u[ind] = owner_div_u[ind++];
+    for (int i = 0; i < DS_; i++) bdry_div_u[ind + i] = owner_div_u[ind + i];
   }
 }
 void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFlux(
@@ -3976,7 +3983,7 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFlux(
   int ind = 0;
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_SOLUTION_PS(, owner_u);
-    GET_SOLUTION_GRAD_PDS(, owner_u);
+    GET_SOLUTION_GRAD_PDS(, owner_div_u);
 
     // Convective flux
     mixture_->SetDensity(d);
@@ -4120,7 +4127,7 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
       const double& T_tr = owner_u[ind++];
       const double& T_eev = owner_u[ind++];
 
-      GET_SOLUTION_GRAD_PDS(, owner_u);
+      GET_SOLUTION_GRAD_PDS(, owner_div_u);
 
       // Convective flux
       mixture_->SetDensity(&owner_u[S_ * ipoint]);
@@ -4301,15 +4308,15 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
         mixture_dy = mixture_dy + dy[i];
       }
 
-      std::vector<aDual> Isx(ns_, aDual(S_));
-      std::vector<aDual> Isy(ns_, aDual(S_));
+      std::vector<aDual> Isx(ns_, aDual(DS_));
+      std::vector<aDual> Isy(ns_, aDual(DS_));
       for (int i = 0; i < ns_; i++) {
         Isx[i] = -Ds[i] * (dx[i] - Y[i] * mixture_dx);
         Isy[i] = -Ds[i] * (dy[i] - Y[i] * mixture_dy);
       }
 
-      aDual Ix_sum(S_);
-      aDual Iy_sum(S_);
+      aDual Ix_sum(DS_);
+      aDual Iy_sum(DS_);
       for (const int& idx : hidx) {
         Ix_sum = Ix_sum + Isx[idx];
         Iy_sum = Iy_sum + Isy[idx];
