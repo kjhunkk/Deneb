@@ -205,6 +205,16 @@ class SlipWallNS2DNeq2T : public BoundaryNS2DNeq2T {
   BOUNDARY_METHODS;
 };
 
+// Boundary Name = AdiabaticWall
+// Dependency: -
+class AdiabaticWallNS2DNeq2T : public BoundaryNS2DNeq2T {
+ public:
+  AdiabaticWallNS2DNeq2T(const int bdry_tag, EquationNS2DNeq2T* equation);
+  virtual ~AdiabaticWallNS2DNeq2T(){};
+
+  BOUNDARY_METHODS;
+};
+
 // Boundary Name = IsothermalWall
 // Dependency: Twall
 class IsothermalWallNS2DNeq2T : public BoundaryNS2DNeq2T {
@@ -322,6 +332,25 @@ class FreeStreamNS2DNeq2T : public ProblemNS2DNeq2T {
  public:
   FreeStreamNS2DNeq2T();
   virtual ~FreeStreamNS2DNeq2T(){};
+
+  virtual void Problem(const int num_points, std::vector<double>& solutions,
+                       const std::vector<double>& coord,
+                       const double time = 0.0) const;
+};
+// Problem = Test
+// ProblemInput = rho_1, ..., rho_ns, u, v, T_tr, T_eev
+class TestNS2DNeq2T : public ProblemNS2DNeq2T {
+ private:
+  std::vector<double> d_;
+  double u_;
+  double v_;
+  double T_tr_;
+  double T_eev_;
+  std::vector<double> wave_number_;
+
+ public:
+  TestNS2DNeq2T();
+  virtual ~TestNS2DNeq2T(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,

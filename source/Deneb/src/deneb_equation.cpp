@@ -10,6 +10,8 @@
 #include "deneb_equation_glmmhd2d.h"
 #include "deneb_equation_ns2d.h"
 #include "deneb_equation_ns2dneq2t.h"
+#include "deneb_equation_ns2dneq2t_nondim.h" // for debug
+#include "deneb_equation_ns2d_primitive.h" // for debug
 #include "deneb_equation_ns3d.h"
 
 namespace deneb {
@@ -33,6 +35,10 @@ std::shared_ptr<Equation> Equation::GetEquation(const std::string& name) {
     return std::make_shared<EquationAdvection2D>();
   else if (!name.compare("Burgers2D"))
     return std::make_shared<EquationBurgers2D>();
+  else if (!name.compare("NS2DNeq2Tnondim")) // for debug
+    return std::make_shared<EquationNS2DNeq2Tnondim>();  // for debug
+  else if (!name.compare("NS2DPri"))             // for debug
+    return std::make_shared<EquationNS2DPri>();  // for debug
   else
     ERROR_MESSAGE("Wrong equation (no-exist):" + name + "\n");
   return nullptr;
