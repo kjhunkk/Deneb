@@ -28,6 +28,7 @@
 #define GMRES_MAX_ITERATION "GMRES.2"
 #define CFL_INCREASE_INTERVAL "IncreaseCFL.0"
 #define CFL_INCREASE_AMOUNT "IncreaseCFL.1"
+#define CFL_INCREASE_MAX "IncreaseCFL.2"
 #define STEADY_CONVERGENCE_TOL "SteadyConvergenceTol"
 
 #define RESTART "Restart.0"

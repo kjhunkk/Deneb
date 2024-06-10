@@ -24,13 +24,13 @@ class Data {
   int order_;
   int volume_flux_order_;
   int surface_flux_order_;
-  int mass_matrix_order_;
   int num_bases_;
 
   int dimension_;
   double lc_; // characteristic length
   bool has_source_term_;
   bool has_mass_matrix_;
+  bool ax_;
 
   // node
   int num_global_nodes_;
@@ -64,6 +64,7 @@ class Data {
   std::vector<std::vector<double>> cell_basis_grad_value_;
   std::vector<std::vector<double>> cell_coefficients_;
   std::vector<std::vector<double>> cell_source_coefficients_;
+  std::vector<std::vector<double>> cell_mass_coefficients_;
 
   // face
   int num_faces_;
@@ -290,6 +291,10 @@ class Data {
   inline const std::vector<std::vector<double>>& GetCellSourceCoefficients()
       const {
     return cell_source_coefficients_;
+  };
+  inline const std::vector<std::vector<double>>& GetCellMassCoefficients()
+      const {
+    return cell_mass_coefficients_;
   };
 
   // face

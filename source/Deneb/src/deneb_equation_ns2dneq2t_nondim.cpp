@@ -1,4 +1,4 @@
-#include "deneb_equation_ns2dneq2t.h"
+#include "deneb_equation_ns2dneq2t_nondim.h"
 
 #include <algorithm>
 #include <cstring>
@@ -17,14 +17,17 @@
   const auto& nx = data[ind++]; \
   const auto& ny = data[ind]
 
-#define GET_SOLUTION_PS(tag, data)     \
-  ind = S_ * ipoint;                   \
-  const auto* d##tag = &data[ind];     \
-  ind += ns_;                          \
-  const auto& u##tag = data[ind++];    \
-  const auto& v##tag = data[ind++];    \
-  const auto& T_tr##tag = data[ind++]; \
-  const auto& T_eev##tag = data[ind]
+#define GET_SOLUTION_PS(tag, data)                                    \
+  ind = S_ * ipoint;                                                  \
+  const auto* d##tag = &data[ind];                                    \
+  ind += ns_;                                                         \
+  const auto& u##tag = data[ind++];                                   \
+  const auto& v##tag = data[ind++];                                   \
+  const auto& T_tr##tag = data[ind++];                                \
+  const auto& T_eev##tag = data[ind];                                 \
+  for (int i = 0; i < ns_; i++) dim_d##tag[i] = d##tag[i] * rho_ref_; \
+  const auto& dim_T_tr##tag = T_tr##tag * T_ref_;                     \
+  const auto& dim_T_eev##tag = T_eev##tag * T_ref_  \
 
 #define GET_SOLUTION_GRAD_PDS(tag, data) \
   ind = DS_ * ipoint;                    \
@@ -41,19 +44,42 @@
   const auto& Ttry##tag = data[ind++];   \
   const auto& Teevy##tag = data[ind]
 
+
+#define GET_CONS_SOLUTION_GRAD_PDS(tag, data)  \
+  ind = DS_ * ipoint;                     \
+  ind += ns_;                             \
+  const auto& dux##tag = data[ind++];     \
+  const auto& dvx##tag = data[ind++];     \
+  const auto& dEx##tag = data[ind++];     \
+  const auto& de_eevx##tag = data[ind++]; \
+  ind += ns_;                             \
+  const auto& duy##tag = data[ind++];     \
+  const auto& dvy##tag = data[ind++];     \
+  const auto& dEy##tag = data[ind++];     \
+  const auto& de_eevy##tag = data[ind]
+
 namespace deneb {
 // ------------------------------- Constants ------------------------------- //
-int ConstantsNS2DNeq2T::S_ = 0;
-int ConstantsNS2DNeq2T::DS_ = 0;
-int ConstantsNS2DNeq2T::SS_ = 0;
-int ConstantsNS2DNeq2T::DSS_ = 0;
-int ConstantsNS2DNeq2T::DDSS_ = 0;
-int ConstantsNS2DNeq2T::ax_ = 0;
-std::shared_ptr<Neq2T::Mixture> ConstantsNS2DNeq2T::mixture_ = NULL;
-int ConstantsNS2DNeq2T::ns_ = 0;
-double ConstantsNS2DNeq2T::T_eev_min_ = 0.0;
+int ConstantsNS2DNeq2Tnondim::S_ = 0;
+int ConstantsNS2DNeq2Tnondim::DS_ = 0;
+int ConstantsNS2DNeq2Tnondim::SS_ = 0;
+int ConstantsNS2DNeq2Tnondim::DSS_ = 0;
+int ConstantsNS2DNeq2Tnondim::DDSS_ = 0;
+int ConstantsNS2DNeq2Tnondim::ax_ = 0;
+std::shared_ptr<Neq2T::Mixture> ConstantsNS2DNeq2Tnondim::mixture_ = NULL;
+int ConstantsNS2DNeq2Tnondim::ns_ = 0;
+double ConstantsNS2DNeq2Tnondim::T_eev_min_ = 0.0;
+double ConstantsNS2DNeq2Tnondim::L_ref_ = 0.0;
+double ConstantsNS2DNeq2Tnondim::rho_ref_ = 0.0;
+double ConstantsNS2DNeq2Tnondim::v_ref_ = 0.0;
+double ConstantsNS2DNeq2Tnondim::e_ref_ = 0.0;
+double ConstantsNS2DNeq2Tnondim::T_ref_ = 0.0;
+double ConstantsNS2DNeq2Tnondim::p_ref_ = 0.0;
+double ConstantsNS2DNeq2Tnondim::D_ref_ = 0.0;
+double ConstantsNS2DNeq2Tnondim::mu_ref_ = 0.0;
+double ConstantsNS2DNeq2Tnondim::k_ref_ = 0.0;
 
-ConstantsNS2DNeq2T::ConstantsNS2DNeq2T() {
+ConstantsNS2DNeq2Tnondim::ConstantsNS2DNeq2Tnondim() {
   if (mixture_ == NULL) {
     auto& config = AVOCADO_CONFIG;
     const std::string mixture_filename = config->GetConfigValue("MixtureFile");
@@ -70,6 +96,17 @@ ConstantsNS2DNeq2T::ConstantsNS2DNeq2T() {
       T_eev_min_ = std::stod(config->GetConfigValue("MinimumTemperature"));
     else
       T_eev_min_ = 0;
+
+    // for debug
+    L_ref_ = std::stod(config->GetConfigValue("L_ref"));
+    rho_ref_ = std::stod(config->GetConfigValue("rho_ref"));
+    T_ref_ = std::stod(config->GetConfigValue("T_ref"));
+    v_ref_ = std::stod(config->GetConfigValue("v_ref"));
+    p_ref_ = rho_ref_ * v_ref_ * v_ref_;
+    e_ref_ = v_ref_ * v_ref_;
+    mu_ref_ = rho_ref_ * v_ref_ * L_ref_;
+    k_ref_ = rho_ref_ * v_ref_ * e_ref_ * L_ref_ / T_ref_;
+    D_ref_ = v_ref_ * L_ref_;
   }
 
   max_num_points_ = 0;
@@ -77,16 +114,26 @@ ConstantsNS2DNeq2T::ConstantsNS2DNeq2T() {
   max_num_face_points_ = 0;
   max_num_bdry_points_ = 0;
 }
-
+void ConstantsNS2DNeq2Tnondim::gradpri2gradsol(const int num_points,
+  const double* sol_jacobi,
+  const double* grad_pri,
+  double* grad_sol) const {
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    gemvAx(1.0, &sol_jacobi[ipoint * SS_], S_, &grad_pri[ipoint * S_ * 2], 1,
+      0.0, &grad_sol[ipoint * S_ * 2], 1, S_, S_);
+    gemvAx(1.0, &sol_jacobi[ipoint * SS_], S_, &grad_pri[ipoint * S_ * 2 + S_],
+      1, 0.0, &grad_sol[ipoint * S_ * 2 + S_], 1, S_, S_);
+  }
+}
 // ------------------------------- Equation -------------------------------- //
-EquationNS2DNeq2T::EquationNS2DNeq2T(bool axis)
-    : ConstantsNS2DNeq2T(), Equation(D_, S_, true) {
+EquationNS2DNeq2Tnondim::EquationNS2DNeq2Tnondim(bool axis)
+    : ConstantsNS2DNeq2Tnondim(), Equation(D_, S_, true) {
   if (axis) {
     ax_ = 1;
-    MASTER_MESSAGE(avocado::GetTitle("EquationNS2DNeq2T (Axi-symmetric)"));
-    ERROR_MESSAGE("Axi-symmetric is not supported in this version!!!");
+    MASTER_MESSAGE(
+        avocado::GetTitle("EquationNS2DNeq2Tnondim (Axi-symmetric)"));
   } else {
-    MASTER_MESSAGE(avocado::GetTitle("EquationNS2DNeq2T"));
+    MASTER_MESSAGE(avocado::GetTitle("EquationNS2DNeq2Tnondim"));
   }
   num_species_ = ns_;
 
@@ -96,26 +143,26 @@ EquationNS2DNeq2T::EquationNS2DNeq2T(bool axis)
   MASTER_MESSAGE(
       "Source term = " + std::string(source_term_ ? "true" : "false") + "\n");
 
-
   num_states_ = S_;
   dimension_ = D_;
 
   auto& config = AVOCADO_CONFIG;
-  problem_ = ProblemNS2DNeq2T::GetProblem(config->GetConfigValue(PROBLEM));
+  problem_ =
+      ProblemNS2DNeq2Tnondim::GetProblem(config->GetConfigValue(PROBLEM));
   const std::string& numflux = config->GetConfigValue(CONVECTIVE_FLUX);
   if (!numflux.compare("LLF")) {
-    ASSIGN_FLUX(EquationNS2DNeq2T, LLF);
+    ASSIGN_FLUX(EquationNS2DNeq2Tnondim, LLF);
   } else
     ERROR_MESSAGE("Wrong numerical flux (no-exist):" + numflux + "\n");
   MASTER_MESSAGE("Problem: " + config->GetConfigValue(PROBLEM) + "\n");
   MASTER_MESSAGE("Convective flux: " + numflux + "\n");
 }
-EquationNS2DNeq2T::~EquationNS2DNeq2T() {
+EquationNS2DNeq2Tnondim::~EquationNS2DNeq2Tnondim() {
   problem_.reset();
   boundaries_.clear();
   boundary_registry_.clear();
 }
-void EquationNS2DNeq2T::RegistBoundary(const std::vector<int>& bdry_tag) {
+void EquationNS2DNeq2Tnondim::RegistBoundary(const std::vector<int>& bdry_tag) {
   auto& config = AVOCADO_CONFIG;
   std::vector<int> all_bdry_tag;
   {
@@ -138,11 +185,11 @@ void EquationNS2DNeq2T::RegistBoundary(const std::vector<int>& bdry_tag) {
     const std::string& bdry_type = config->GetConfigValue(BDRY_TYPE(tag));
     if (boundary_registry_.find(tag) == boundary_registry_.end())
       boundary_registry_[tag] =
-          BoundaryNS2DNeq2T::GetBoundary(bdry_type, tag, this);
+          BoundaryNS2DNeq2Tnondim::GetBoundary(bdry_type, tag, this);
   }
 }
-void EquationNS2DNeq2T::BuildData(void) {
-  MASTER_MESSAGE(avocado::GetTitle("EquationNS2DNeq2T::BuildData()"));
+void EquationNS2DNeq2Tnondim::BuildData(void) {
+  MASTER_MESSAGE(avocado::GetTitle("EquationNS2DNeq2Tnondim::BuildData()"));
 
   const int& num_bdries = DENEB_DATA->GetNumBdries();
   boundaries_.resize(num_bdries, nullptr);
@@ -194,6 +241,16 @@ void EquationNS2DNeq2T::BuildData(void) {
       S_ * num_bases, DENEB_DATA->GetOuterSendCellList(),
       DENEB_DATA->GetOuterRecvCellList());
 
+  auto& config = AVOCADO_CONFIG;
+  const auto& bdry_owner_cell = DENEB_DATA->GetBdryOwnerCell();
+  const auto& bdry_tag = DENEB_DATA->GetBdryTag();
+  for (int ibdry = 0; ibdry < num_bdries; ibdry++) {
+    const int owner_cell = bdry_owner_cell[ibdry];
+    const std::string& bdry_type = config->GetConfigValue(BDRY_TYPE(bdry_tag[ibdry]));
+    if (bdry_type.find("Wall") != std::string::npos)
+      wall_cells_.push_back(owner_cell);
+  }
+
   std::vector<std::string> variable_names;
   for (auto& sp : mixture_->GetSpecies())
     variable_names.push_back("rho_" + sp->GetSymbol());
@@ -218,9 +275,11 @@ void EquationNS2DNeq2T::BuildData(void) {
     cell_variable_names_.push_back("w_" + sp->GetSymbol());
   cell_variable_names_.push_back("w_eev");
 
-  // cell_variable_names_.push_back("AV"); // for debug
-
   face_variable_names_ = cell_variable_names_;
+  face_variable_names_.push_back("dTtr/dn");
+  face_variable_names_.push_back("dTeev/dn");
+
+  cell_variable_names_.push_back("AV"); // for debug
 
   SYNCRO();
   {
@@ -236,28 +295,34 @@ void EquationNS2DNeq2T::BuildData(void) {
     MASTER_MESSAGE(message + "\n");
   }
 }
-void EquationNS2DNeq2T::GetCellPostSolution(
+void EquationNS2DNeq2Tnondim::GetCellPostSolution(
     const int icell, const int num_points, const std::vector<double>& solution,
     const std::vector<double>& solution_grad,
     std::vector<double>& post_solution) {
   int ind = 0;
   double arvis = 0.0;
-  //if (icell >= 0) arvis =
-  //  DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(icell, 0); // for debug
+   if (icell >= 0) arvis =
+    DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(icell, 0); // for debug
+
+  std::vector<double> rho(ns_, 0.0);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     const double* sol = &solution[ipoint * S_];
 
-    for (int istate = 0; istate < S_; istate++)
-      post_solution[ind++] = sol[istate];
-
-    const double* rho = &sol[0];
-    const double& u = sol[ns_];
-    const double& v = sol[ns_ + 1];
-    const double& T_tr = sol[ns_ + 2];
-    const double& T_eev = sol[ns_ + 3];
+    for (int i = 0; i < ns_; i++) {
+      rho[i] = sol[i] * rho_ref_;
+      post_solution[ind++] = rho[i];
+    }
+    const double u = sol[ns_] * v_ref_;
+    const double v = sol[ns_ + 1] * v_ref_;
+    const double T_tr = sol[ns_ + 2] * T_ref_;
+    const double T_eev = sol[ns_ + 3] * T_ref_;
+    post_solution[ind++] = u;
+    post_solution[ind++] = v;
+    post_solution[ind++] = T_tr;
+    post_solution[ind++] = T_eev;
 
     const auto& species = mixture_->GetSpecies();
-    mixture_->SetDensity(rho);
+    mixture_->SetDensity(&rho[0]);
     const double* Y = mixture_->GetMassFraction();
     const double d = mixture_->GetTotalDensity();
     const double d_inv = 1.0 / d;
@@ -298,18 +363,89 @@ void EquationNS2DNeq2T::GetCellPostSolution(
     const double vt = mixture_->GetVTTransferRate(T_tr, T_eev);
     const double et = mixture_->GetETTransferRate(T_tr, T_eev);
     post_solution[ind++] = ct + vt + et;
-    
-    //post_solution[ind++] = arvis; // for debug
+
+    post_solution[ind++] = arvis; // for debug
   }
 }
-void EquationNS2DNeq2T::GetFacePostSolution(
+void EquationNS2DNeq2Tnondim::GetFacePostSolution(
     const int num_points, const std::vector<double>& solution,
     const std::vector<double>& solution_grad, const std::vector<double>& normal,
     std::vector<double>& post_solution) {
-  GetCellPostSolution(-1, num_points, solution, solution_grad, post_solution);
+  int ind = 0;
+  std::vector<double> rho(ns_, 0.0);
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    const double* sol = &solution[ipoint * S_];
+    const double* solgrad = &solution_grad[ipoint * DS_];
+
+    for (int i = 0; i < ns_; i++) {
+      rho[i] = sol[i] * rho_ref_;
+      post_solution[ind++] = rho[i];
+    }
+    const double u = sol[ns_] * v_ref_;
+    const double v = sol[ns_ + 1] * v_ref_;
+    const double T_tr = sol[ns_ + 2] * T_ref_;
+    const double T_eev = sol[ns_ + 3] * T_ref_;
+    const double Ttrx = solgrad[ns_ + 2] * T_ref_ / L_ref_;
+    const double Teevx = solgrad[ns_ + 3] * T_ref_ / L_ref_;
+    const double Ttry = solgrad[2 * ns_ + 6] * T_ref_ / L_ref_;
+    const double Teevy = solgrad[2 * ns_ + 7] * T_ref_ / L_ref_;
+    const double nx = normal[ipoint * D_];
+    const double ny = normal[ipoint * D_ + 1];
+
+    post_solution[ind++] = u;
+    post_solution[ind++] = v;
+    post_solution[ind++] = T_tr;
+    post_solution[ind++] = T_eev;
+
+    const auto& species = mixture_->GetSpecies();
+    mixture_->SetDensity(&rho[0]);
+    const double* Y = mixture_->GetMassFraction();
+    const double d = mixture_->GetTotalDensity();
+    const double d_inv = 1.0 / d;
+
+    double e = 0.0;
+    double e_eev = 0.0;
+    for (int i = 0; i < ns_; i++) {
+      const auto e_sp = species[i]->GetInternalEnergy(T_tr, T_eev);
+      const auto e_eev_sp = species[i]->GetElectronicVibrationEnergy(T_eev);
+      e += e_sp * Y[i];
+      e_eev += e_eev_sp * Y[i];
+    }
+
+    const double beta = mixture_->GetBeta(T_tr);
+    const double p = mixture_->GetPressure(T_tr, T_eev);
+    const double a = std::sqrt((1.0 + beta) * p * d_inv);
+    const double Ma = std::sqrt(u * u + v * v) / a;
+    const double mu = mixture_->GetViscosity(T_tr, T_eev);
+    const double k_tr = mixture_->GetTransRotationConductivity(T_tr, T_eev);
+    const double k_eev =
+      mixture_->GetElectronicVibrationConductivity(T_tr, T_eev);
+
+    post_solution[ind++] = d;
+    post_solution[ind++] = e;
+    post_solution[ind++] = e_eev;
+    post_solution[ind++] = p;
+    post_solution[ind++] = a;
+    post_solution[ind++] = Ma;
+    post_solution[ind++] = mu;
+    post_solution[ind++] = k_tr;
+    post_solution[ind++] = k_eev;
+    for (int i = 0; i < ns_; i++) post_solution[ind++] = Y[i];
+
+    const double* rate = mixture_->GetSpeciesReactionRate(T_tr, T_eev);
+    for (int i = 0; i < ns_; i++) post_solution[ind++] = rate[i];
+
+    const double ct = mixture_->GetReactionTransferRate(T_tr, T_eev);
+    const double vt = mixture_->GetVTTransferRate(T_tr, T_eev);
+    const double et = mixture_->GetETTransferRate(T_tr, T_eev);
+    post_solution[ind++] = ct + vt + et;
+
+    post_solution[ind++] = -(Ttrx * nx + Ttry * ny);
+    post_solution[ind++] = -(Teevx * nx + Teevy * ny);
+  }
 }
-void EquationNS2DNeq2T::ComputeInitialSolution(double* solution,
-                                               const double t) {
+void EquationNS2DNeq2Tnondim::ComputeInitialSolution(double* solution,
+                                                     const double t) {
   const int& order = DENEB_DATA->GetOrder();
   const int& num_bases = DENEB_DATA->GetNumBases();
   const int& num_cells = DENEB_DATA->GetNumCells();
@@ -339,7 +475,7 @@ void EquationNS2DNeq2T::ComputeInitialSolution(double* solution,
               basis_values[ipoint * num_bases + ibasis] * quad_weights[ipoint];
   }
 }
-void EquationNS2DNeq2T::ComputeLocalTimestep(
+void EquationNS2DNeq2Tnondim::ComputeLocalTimestep(
     const double* solution, std::vector<double>& local_timestep) {
   static const int& order = DENEB_DATA->GetOrder();
   static const int& num_bases = DENEB_DATA->GetNumBases();
@@ -351,28 +487,33 @@ void EquationNS2DNeq2T::ComputeLocalTimestep(
   static const auto& cell_basis_value = DENEB_DATA->GetCellBasisValue();
 
   static std::vector<double> d(ns_);
+  static std::vector<double> dim_d(ns_);
   for (int icell = 0; icell < num_cells; icell++) {
     const double& Vx = cell_proj_volumes[icell * D_];
     const double& Vy = cell_proj_volumes[icell * D_ + 1];
     const double* sol = &solution[icell * sb];
 
-    for (int i = 0; i < ns_; i++)
+    for (int i = 0; i < ns_; i++) {
       d[i] = sol[i * num_bases] * cell_basis_value[icell][0];
+      dim_d[i] = d[i] * rho_ref_;
+    }    
     const double& u = sol[ns_ * num_bases] * cell_basis_value[icell][0];
     const double& v = sol[(ns_ + 1) * num_bases] * cell_basis_value[icell][0];
     const double& T_tr =
         sol[(ns_ + 2) * num_bases] * cell_basis_value[icell][0];
     const double& T_eev =
         sol[(ns_ + 3) * num_bases] * cell_basis_value[icell][0];
+    const double dim_T_tr = T_tr * T_ref_;
+    const double dim_T_eev = T_eev * T_ref_;
 
-    mixture_->SetDensity(&d[0]);
-    const double mixture_d = mixture_->GetTotalDensity();
+    mixture_->SetDensity(&dim_d[0]);
+    const double mixture_d = mixture_->GetTotalDensity() / rho_ref_;
 
-    const double beta = mixture_->GetBeta(T_tr);
-    const double mixture_p = mixture_->GetPressure(T_tr, T_eev);
+    const double beta = mixture_->GetBeta(dim_T_tr);
+    const double mixture_p = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
     const double a = std::sqrt((1.0 + beta) * mixture_p / mixture_d);
 
-    const double mu = mixture_->GetViscosity(T_tr, T_eev);
+    const double mu = mixture_->GetViscosity(dim_T_tr, dim_T_eev) / mu_ref_;
     const double max_visradii = 4.0 / 3.0 * mu;
     const double arvis =
         DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(icell, 0);
@@ -382,11 +523,16 @@ void EquationNS2DNeq2T::ComputeLocalTimestep(
     local_timestep[icell] =
         cell_volumes[icell] /
         ((std::fabs(u) + a) * Vx + (std::fabs(v) + a) * Vy + factor);
+
+    if (!std::isnormal(local_timestep[icell]) || local_timestep[icell] <= 0.0)
+      ERROR_MESSAGE("Abnormal time step detected! : local_timestep[ " +
+        std::to_string(icell) +
+        "] = " + std::to_string(local_timestep[icell]) + "\n");
   }
   avocado::VecScale(num_cells, 1.0 / static_cast<double>(2 * order + 1),
                     &local_timestep[0]);
 }
-double EquationNS2DNeq2T::ComputeMaxCharacteristicSpeed(
+double EquationNS2DNeq2Tnondim::ComputeMaxCharacteristicSpeed(
     const double* input_solution) const {
   const double* rho = input_solution;
   const double& u = input_solution[ns_];
@@ -394,18 +540,24 @@ double EquationNS2DNeq2T::ComputeMaxCharacteristicSpeed(
   const double& T_tr = input_solution[ns_ + 2];
   const double& T_eev = input_solution[ns_ + 3];
 
-  mixture_->SetDensity(rho);
-  const double d = mixture_->GetTotalDensity();
+  std::vector<double> dim_rho(ns_, 0.0);
+  for (int i = 0; i < ns_; i++) dim_rho[i] = rho[i] * rho_ref_;
+  const double dim_T_tr = T_tr * T_ref_;
+  const double dim_T_eev = T_eev * T_ref_;
 
-  const double beta = mixture_->GetBeta(T_tr);
-  const double p = mixture_->GetPressure(T_tr, T_eev);
+  mixture_->SetDensity(&dim_rho[0]);
+  const double d = mixture_->GetTotalDensity() / rho_ref_;
+
+  const double beta = mixture_->GetBeta(dim_T_tr);
+  const double p =
+      mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
   const double a = std::sqrt((1.0 + beta) * p / d);
   const double V = std::sqrt(u * u + v * v);
 
   return V + a;
 }
-void EquationNS2DNeq2T::ComputeRHS(const double* solution, double* rhs,
-                                   const double t) {
+void EquationNS2DNeq2Tnondim::ComputeRHS(const double* solution, double* rhs,
+                                         const double t) {
   static const int& num_bases = DENEB_DATA->GetNumBases();
   static const int& num_cells = DENEB_DATA->GetNumCells();
   static const int sb = S_ * num_bases;
@@ -431,6 +583,7 @@ void EquationNS2DNeq2T::ComputeRHS(const double* solution, double* rhs,
   static const auto& face_owner_cell = DENEB_DATA->GetFaceOwnerCell();
   static const auto& face_neighbor_cell = DENEB_DATA->GetFaceNeighborCell();
   static const auto& face_normals = DENEB_DATA->GetFaceNormals();
+  static const auto& face_points = DENEB_DATA->GetFacePoints();
   static const auto& face_owner_basis_value =
       DENEB_DATA->GetFaceOwnerBasisValue();
   static const auto& face_neighbor_basis_value =
@@ -486,7 +639,7 @@ void EquationNS2DNeq2T::ComputeRHS(const double* solution, double* rhs,
 
     ComputeNumFlux(num_points, flux, owner_cell, neighbor_cell, owner_solution,
                    owner_solution_grad, neighbor_solution,
-                   neighbor_solution_grad, face_normals[iface]);
+                   neighbor_solution_grad, face_normals[iface], face_points[iface]);
 
     avocado::Kernel2::f67(&flux[0], &face_owner_coefficients[iface][0],
                           &rhs[owner_cell * sb], S_, D_, num_points, num_bases,
@@ -522,9 +675,12 @@ void EquationNS2DNeq2T::ComputeRHS(const double* solution, double* rhs,
     vdSub(num_points * S_, &neighbor_solution[0], &owner_solution[0],
           &solution_difference[0]);
 
+    //avocado::Kernel1::f59(&bdry_owner_coefficients[ibdry][0],
+    //                      &solution_difference[0], &local_auxiliary[0], D_,
+    //                      num_bases, num_points, S_, 1.0, 0.0);
     avocado::Kernel1::f59(&bdry_owner_coefficients[ibdry][0],
                           &solution_difference[0], &local_auxiliary[0], D_,
-                          num_bases, num_points, S_, 1.0, 0.0);
+                          num_bases, num_points, S_, 0.5, 0.0);
     avocado::Kernel1::f42(&bdry_owner_basis_grad_value[ibdry][0],
                           &solution[owner_cell * sb], &owner_solution_grad[0],
                           D_, num_points, num_bases, S_, 1.0, 0.0);
@@ -589,7 +745,7 @@ void EquationNS2DNeq2T::ComputeRHS(const double* solution, double* rhs,
 
     ComputeNumFlux(num_points, flux, owner_cell, neighbor_cell + num_cells,
                    owner_solution, owner_solution_grad, neighbor_solution,
-                   neighbor_solution_grad, face_normals[iface]);
+                   neighbor_solution_grad, face_normals[iface], face_points[iface]);
 
     avocado::Kernel2::f67(&flux[0], &face_owner_coefficients[iface][0],
                           &rhs[owner_cell * sb], S_, D_, num_points, num_bases,
@@ -631,8 +787,8 @@ void EquationNS2DNeq2T::ComputeRHS(const double* solution, double* rhs,
             &rhs[icell * sb], num_points, S_, num_bases);
   }
 }
-void EquationNS2DNeq2T::ComputeSystemMatrix(const double* solution, Mat& sysmat,
-                                            const double t) {
+void EquationNS2DNeq2Tnondim::ComputeSystemMatrix(const double* solution,
+                                                  Mat& sysmat, const double t) {
   static const int& num_bases = DENEB_DATA->GetNumBases();
   static const int& num_cells = DENEB_DATA->GetNumCells();
   static const int& num_bdries = DENEB_DATA->GetNumBdries();
@@ -684,6 +840,7 @@ void EquationNS2DNeq2T::ComputeSystemMatrix(const double* solution, Mat& sysmat,
   static const auto& face_owner_cell = DENEB_DATA->GetFaceOwnerCell();
   static const auto& face_neighbor_cell = DENEB_DATA->GetFaceNeighborCell();
   static const auto& face_normals = DENEB_DATA->GetFaceNormals();
+  static const auto& face_points = DENEB_DATA->GetFacePoints();
   static const auto& face_owner_basis_value =
       DENEB_DATA->GetFaceOwnerBasisValue();
   static const auto& face_neighbor_basis_value =
@@ -737,10 +894,10 @@ void EquationNS2DNeq2T::ComputeSystemMatrix(const double* solution, Mat& sysmat,
                 &auxiliary_solution_[neighbor_cell * dsb], 1);
 
     ComputeNumFluxJacobi(num_points, flux_owner_jacobi, flux_neighbor_jacobi,
-                         flux_owner_grad_jacobi, flux_neighbor_grad_jacobi,
-                         owner_cell, neighbor_cell, owner_solution,
-                         owner_solution_grad, neighbor_solution,
-                         neighbor_solution_grad, face_normals[iface]);
+      flux_owner_grad_jacobi, flux_neighbor_grad_jacobi,
+      owner_cell, neighbor_cell, owner_solution,
+      owner_solution_grad, neighbor_solution,
+      neighbor_solution_grad, face_normals[iface], face_points[iface]);
 
     avocado::Kernel1::f47(&face_owner_coefficients[iface][0],
                           &face_owner_basis_value[iface][0], &alpha[0], D_,
@@ -838,9 +995,12 @@ void EquationNS2DNeq2T::ComputeSystemMatrix(const double* solution, Mat& sysmat,
     vdSub(num_points * S_, &neighbor_solution[0], &owner_solution[0],
           &solution_difference[0]);
 
+    //avocado::Kernel1::f59(&bdry_owner_coefficients[ibdry][0],
+    //                      &solution_difference[0], &local_auxiliary[0], D_,
+    //                      num_bases, num_points, S_, 1.0, 0.0);
     avocado::Kernel1::f59(&bdry_owner_coefficients[ibdry][0],
                           &solution_difference[0], &local_auxiliary[0], D_,
-                          num_bases, num_points, S_, 1.0, 0.0);
+                          num_bases, num_points, S_, 0.5, 0.0);
     avocado::Kernel1::f42(&bdry_owner_basis_grad_value[ibdry][0],
                           &solution[owner_cell * sb], &owner_solution_grad[0],
                           D_, num_points, num_bases, S_, 1.0, 0.0);
@@ -849,7 +1009,7 @@ void EquationNS2DNeq2T::ComputeSystemMatrix(const double* solution, Mat& sysmat,
         &owner_solution_grad[0], D_, S_, num_bases, num_points, 1.0, 1.0);
     cblas_daxpy(dsb, 1.0, &local_auxiliary[0], 1,
                 &auxiliary_solution_[owner_cell * dsb], 1);
-    
+
     double* solution_jacobi = &bdry_solution_jacobi[ibdry * ssp];
     boundaries_[ibdry]->ComputeBdrySolutionJacobi(
         num_points, solution_jacobi, owner_solution, owner_solution_grad,
@@ -940,7 +1100,7 @@ void EquationNS2DNeq2T::ComputeSystemMatrix(const double* solution, Mat& sysmat,
                          flux_owner_grad_jacobi, flux_neighbor_grad_jacobi,
                          owner_cell, neighbor_cell + num_cells, owner_solution,
                          owner_solution_grad, neighbor_solution,
-                         neighbor_solution_grad, face_normals[iface]);
+                         neighbor_solution_grad, face_normals[iface], face_points[iface]);
 
     avocado::Kernel1::f47(&face_owner_coefficients[iface][0],
                           &face_owner_basis_value[iface][0], &alpha[0], D_,
@@ -1134,19 +1294,214 @@ void EquationNS2DNeq2T::ComputeSystemMatrix(const double* solution, Mat& sysmat,
   MatAssemblyBegin(sysmat, MAT_FINAL_ASSEMBLY);
   MatAssemblyEnd(sysmat, MAT_FINAL_ASSEMBLY);
 }
-void EquationNS2DNeq2T::SystemMatrixShift(const double* solution, Mat& sysmat,
-                                          const double dt, const double t) {
+void EquationNS2DNeq2Tnondim::SolutionLimit(double* solution) {
+  static const int& num_bases = DENEB_DATA->GetNumBases();
+  static const int& num_cells = DENEB_DATA->GetNumCells();
+  static const int& order = DENEB_DATA->GetOrder();
+  static const int sb = S_ * num_bases;
+  static const int dsb = DS_ * num_bases;
+
+  static std::vector<double> owner_u(S_ * max_num_points_);
+  static std::vector<double> neighbor_u(S_ * max_num_points_);
+  static const int& num_inner_faces = DENEB_DATA->GetNumInnerFaces();
+  static const auto& num_face_points = DENEB_DATA->GetNumFacePoints();
+  static const auto& face_owner_cell = DENEB_DATA->GetFaceOwnerCell();
+  static const auto& face_neighbor_cell = DENEB_DATA->GetFaceNeighborCell();
+  static const auto& face_owner_basis_value =
+      DENEB_DATA->GetFaceOwnerBasisValue();
+  static const auto& face_neighbor_basis_value =
+      DENEB_DATA->GetFaceNeighborBasisValue();
+
+  int ind = 0;
+  for (int iface = 0; iface < num_inner_faces; iface++) {
+    const int& num_points = num_face_points[iface];
+    const int& owner_cell = face_owner_cell[iface];
+    const int& neighbor_cell = face_neighbor_cell[iface];
+
+    avocado::Kernel0::f4(&solution[owner_cell * sb],
+                         &face_owner_basis_value[iface][0], &owner_u[0], S_,
+                         num_bases, num_points, 1.0, 0.0);
+    avocado::Kernel0::f4(&solution[neighbor_cell * sb],
+                         &face_neighbor_basis_value[iface][0], &neighbor_u[0],
+                         S_, num_bases, num_points, 1.0, 0.0);
+
+    bool limit_flag_o = false;
+    bool limit_flag_n = false;
+    for (int ipoint = 0; ipoint < num_points; ipoint++) {
+      ind = S_ * ipoint;
+      const auto* d_o = &owner_u[ind];
+      const auto& T_tr_o = owner_u[ind + ns_ + 2];
+      const auto& T_eev_o = owner_u[ind + ns_ + 3];
+
+      const auto* d_n = &neighbor_u[ind];
+      const auto& T_tr_n = neighbor_u[ind + ns_ + 2];
+      const auto& T_eev_n = neighbor_u[ind + ns_ + 3];
+
+      for (int i = 0; i < ns_; i++) {
+        if (d_o[i] < 0.0) limit_flag_o = true;
+        if (d_n[i] < 0.0) limit_flag_n = true;
+      }
+
+      if (T_tr_o < 10 / T_ref_ || T_eev_o < 10 / T_ref_) limit_flag_o = true;
+      if (T_tr_n < 10 / T_ref_ || T_eev_n < 10 / T_ref_) limit_flag_n = true;
+    }
+
+    if (limit_flag_o) {
+      for (int istate = 0; istate < S_; istate++)
+        memset(&solution[owner_cell * sb + istate * num_bases + 1], 0,
+               sizeof(double) * (num_bases - 1));
+    }
+    if (limit_flag_n) {
+      for (int istate = 0; istate < S_; istate++)
+        memset(&solution[neighbor_cell * sb + istate * num_bases + 1], 0,
+               sizeof(double) * (num_bases - 1));
+    }
+  }
+
+  static const int& num_faces = DENEB_DATA->GetNumFaces();
+  for (int iface = num_inner_faces; iface < num_faces; iface++) {
+    const int& num_points = num_face_points[iface];
+    const int& owner_cell = face_owner_cell[iface];
+
+    avocado::Kernel0::f4(&solution[owner_cell * sb],
+                         &face_owner_basis_value[iface][0], &owner_u[0], S_,
+                         num_bases, num_points, 1.0, 0.0);
+
+    bool limit_flag = false;
+    for (int ipoint = 0; ipoint < num_points; ipoint++) {
+      ind = S_ * ipoint;
+      const auto* d = &owner_u[ind];
+      const auto& T_tr = owner_u[ind + ns_ + 2];
+      const auto& T_eev = owner_u[ind + ns_ + 3];
+
+      for (int i = 0; i < ns_; i++)
+        if (d[i] < 0.0) limit_flag = true;
+
+      if (T_tr < 10 / T_ref_ || T_eev < 10 / T_ref_) limit_flag = true;
+    }
+
+    if (limit_flag) {
+      for (int istate = 0; istate < S_; istate++)
+        memset(&solution[owner_cell * sb + istate * num_bases + 1], 0,
+               sizeof(double) * (num_bases - 1));
+    }
+  }
+
+  static const int& num_bdries = DENEB_DATA->GetNumBdries();
+  static const auto& num_bdry_points = DENEB_DATA->GetNumBdryPoints();
+  static const auto& bdry_owner_cell = DENEB_DATA->GetBdryOwnerCell();
+  static const auto& bdry_points = DENEB_DATA->GetBdryPoints();
+  static const auto& bdry_owner_basis_value =
+      DENEB_DATA->GetBdryOwnerBasisValue();
+  for (int ibdry = 0; ibdry < num_bdries; ibdry++) {
+    const int& num_points = num_bdry_points[ibdry];
+    const int& owner_cell = bdry_owner_cell[ibdry];
+
+    avocado::Kernel0::f4(&solution[owner_cell * sb],
+                         &bdry_owner_basis_value[ibdry][0], &owner_u[0], S_,
+                         num_bases, num_points, 1.0, 0.0);
+
+    bool limit_flag = false;
+    for (int ipoint = 0; ipoint < num_points; ipoint++) {
+      ind = S_ * ipoint;
+      const auto* d = &owner_u[ind];
+      const auto& T_tr = owner_u[ind + ns_ + 2];
+      const auto& T_eev = owner_u[ind + ns_ + 3];
+
+      for (int i = 0; i < ns_; i++)
+        if (d[i] < 0.0) limit_flag = true;
+
+      if (T_tr < 10 / T_ref_ || T_eev < 10 / T_ref_) limit_flag = true;
+
+      if (limit_flag) {
+        for (int istate = 0; istate < S_; istate++)
+          memset(&solution[owner_cell * sb + istate * num_bases + 1], 0,
+                 sizeof(double) * (num_bases - 1));
+      }
+    }
+  }
+
+  // cell sweep
+  static const auto& num_cell_points = DENEB_DATA->GetNumCellPoints();
+  static const auto& cell_basis_value = DENEB_DATA->GetCellBasisValue();
+  static std::vector<double> sol0(S_);
+  static std::vector<double> pri0(S_);
+  for (int icell = 0; icell < num_cells; icell++) {
+    const int& num_points = num_cell_points[icell];
+
+    avocado::Kernel0::f4(&solution[icell * sb], &cell_basis_value[icell][0],
+                         &owner_u[0], S_, num_bases, num_points, 1.0, 0.0);
+
+    bool limit_flag = false;
+    for (int ipoint = 0; ipoint < num_points; ipoint++) {
+      ind = S_ * ipoint;
+      const auto* d = &owner_u[ind];
+      const auto& T_tr = owner_u[ind + ns_ + 2];
+      const auto& T_eev = owner_u[ind + ns_ + 3];
+
+      for (int i = 0; i < ns_; i++)
+        if (d[i] < 0.0) limit_flag = true;
+
+      if (T_tr < 10 / T_ref_ || T_eev < 10 / T_ref_) limit_flag = true;
+
+      if (limit_flag) {
+        for (int istate = 0; istate < S_; istate++)
+          memset(&solution[icell * sb + istate * num_bases + 1], 0,
+                 sizeof(double) * (num_bases - 1));
+      }
+    }
+
+    double* sol = &solution[icell * sb];
+
+    for (int i = 0; i < ns_; i++) {
+      sol0[i] = sol[i * num_bases] * cell_basis_value[icell][0];
+      if (sol0[i] < 0.0) sol[i * num_bases] = 0.0;
+    }
+    sol0[ns_ + 2] = sol[(ns_ + 2) * num_bases] * cell_basis_value[icell][0];
+    sol0[ns_ + 3] = sol[(ns_ + 3) * num_bases] * cell_basis_value[icell][0];
+
+    if (sol0[ns_ + 2] < 10 / T_ref_) {
+      sol0[ns_ + 2] = 10 / T_ref_;
+      sol[(ns_ + 2) * num_bases] = sol0[ns_ + 2] / cell_basis_value[icell][0];
+    }
+    if (sol0[ns_ + 3] < 10 / T_ref_) {
+      sol0[ns_ + 3] = 10 / T_ref_;
+      sol[(ns_ + 3) * num_bases] = sol0[ns_ + 3] / cell_basis_value[icell][0];
+    }
+  }
+
+  if (order > 1) {
+    int num_bases1 = 0;
+    if (dimension_ == 2)
+      num_bases1 = 3;
+    else if (dimension_ == 3)
+      num_bases1 = 4;
+    else ERROR_MESSAGE("Wrong dimension");
+
+    for (int icell = 0; icell < wall_cells_.size(); icell++) {
+      int wall_cell_index = wall_cells_[icell];
+      for (int istate = 0; istate < S_; istate++) {
+        cblas_dscal(num_bases - num_bases1, 0.0, &solution[wall_cell_index * sb + istate * num_bases + num_bases1], 1);
+      }
+    }
+  }
+}
+void EquationNS2DNeq2Tnondim::SystemMatrixShift(const double* solution,
+                                                Mat& sysmat, const double dt,
+                                                const double t) {
   static const auto& num_cell_points = DENEB_DATA->GetNumCellPoints();
   static const auto& cell_basis_value = DENEB_DATA->GetCellBasisValue();
   static const int& num_cells = DENEB_DATA->GetNumCells();
   static const int& num_bases = DENEB_DATA->GetNumBases();
   static const auto& mat_index = DENEB_DATA->GetMatIndex();
-  static const auto& cell_source_coefficients =
-      DENEB_DATA->GetCellSourceCoefficients();
+  static const auto& cell_mass_coefficients =
+      DENEB_DATA->GetCellMassCoefficients();
+  static const auto& cell_points = DENEB_DATA->GetCellPoints();
   static const int sb = num_states_ * num_bases;
   static std::vector<double> block(sb * sb);
   static std::vector<double> owner_solution(S_ * max_num_points_);
   static std::vector<double> solution_jacobi(SS_ * max_num_points_);
+  
 
   const double dt_factor = 1.0 / dt;
   for (int icell = 0; icell < num_cells; icell++) {
@@ -1157,9 +1512,11 @@ void EquationNS2DNeq2T::SystemMatrixShift(const double* solution, Mat& sysmat,
                          &owner_solution[0], S_, num_bases, num_points, 1.0,
                          0.0);
     ComputeSolutionJacobi(num_points, solution_jacobi, owner_solution);
-
+      
     // Need optimization
     for (int ipoint = 0; ipoint < num_points; ipoint++)
+    {
+      const double fy = static_cast<double>(ax_) * (cell_points[icell][ipoint * D_ + 1] - 1.0) + 1.0;
       for (int istate = 0; istate < S_; istate++)
         for (int ibasis = 0; ibasis < num_bases; ibasis++)
           for (int jstate = 0; jstate < S_; jstate++)
@@ -1168,10 +1525,11 @@ void EquationNS2DNeq2T::SystemMatrixShift(const double* solution, Mat& sysmat,
               const int icolumn = jbasis + num_bases * jstate;
 
               block[irow * sb + icolumn] +=
-                  cell_source_coefficients[icell][ipoint * num_bases + jbasis] *
-                  cell_basis_value[icell][ipoint * num_bases + ibasis] *
-                  solution_jacobi[ipoint * SS_ + istate * S_ + jstate];
+                cell_mass_coefficients[icell][ipoint * num_bases * num_bases +
+                ibasis * num_bases + jbasis] *
+                solution_jacobi[ipoint * SS_ + istate * S_ + jstate] * fy;
             }
+    }
 
     avocado::VecScale(sb * sb, dt_factor, &block[0]);
 
@@ -1181,16 +1539,17 @@ void EquationNS2DNeq2T::SystemMatrixShift(const double* solution, Mat& sysmat,
   MatAssemblyBegin(sysmat, MAT_FINAL_ASSEMBLY);
   MatAssemblyEnd(sysmat, MAT_FINAL_ASSEMBLY);
 }
-void EquationNS2DNeq2T::SystemMatrixShift(const double* solution, Mat& sysmat,
-                                          const std::vector<double>& local_dt,
-                                          const double t) {
+void EquationNS2DNeq2Tnondim::SystemMatrixShift(
+    const double* solution, Mat& sysmat, const std::vector<double>& local_dt,
+    const double t) {
   static const auto& num_cell_points = DENEB_DATA->GetNumCellPoints();
   static const auto& cell_basis_value = DENEB_DATA->GetCellBasisValue();
   static const int& num_cells = DENEB_DATA->GetNumCells();
   static const int& num_bases = DENEB_DATA->GetNumBases();
   static const auto& mat_index = DENEB_DATA->GetMatIndex();
-  static const auto& cell_source_coefficients =
-      DENEB_DATA->GetCellSourceCoefficients();
+  static const auto& cell_mass_coefficients =
+      DENEB_DATA->GetCellMassCoefficients();
+  static const auto& cell_points = DENEB_DATA->GetCellPoints();
   static const int sb = num_states_ * num_bases;
   static std::vector<double> block(sb * sb);
   static std::vector<double> owner_solution(S_ * max_num_points_);
@@ -1207,7 +1566,8 @@ void EquationNS2DNeq2T::SystemMatrixShift(const double* solution, Mat& sysmat,
     ComputeSolutionJacobi(num_points, solution_jacobi, owner_solution);
 
     // Need optimization
-    for (int ipoint = 0; ipoint < num_points; ipoint++)
+    for (int ipoint = 0; ipoint < num_points; ipoint++) {
+      const double fy = static_cast<double>(ax_) * (cell_points[icell][ipoint * D_ + 1] - 1.0) + 1.0;
       for (int istate = 0; istate < S_; istate++)
         for (int ibasis = 0; ibasis < num_bases; ibasis++)
           for (int jstate = 0; jstate < S_; jstate++)
@@ -1216,10 +1576,10 @@ void EquationNS2DNeq2T::SystemMatrixShift(const double* solution, Mat& sysmat,
               const int icolumn = jbasis + num_bases * jstate;
 
               block[irow * sb + icolumn] +=
-                  cell_source_coefficients[icell][ipoint * num_bases + jbasis] *
-                  cell_basis_value[icell][ipoint * num_bases + ibasis] *
-                  solution_jacobi[ipoint * SS_ + istate * S_ + jstate];
+                cell_mass_coefficients[icell][ipoint * num_bases * num_bases + ibasis * num_bases + jbasis] *
+                solution_jacobi[ipoint * SS_ + istate * S_ + jstate] * fy;
             }
+    }
 
     avocado::VecScale(sb * sb, dt_factor, &block[0]);
 
@@ -1229,40 +1589,49 @@ void EquationNS2DNeq2T::SystemMatrixShift(const double* solution, Mat& sysmat,
   MatAssemblyBegin(sysmat, MAT_FINAL_ASSEMBLY);
   MatAssemblyEnd(sysmat, MAT_FINAL_ASSEMBLY);
 }
-void EquationNS2DNeq2T::ComputeComFlux(const int num_points,
-                                       std::vector<double>& flux,
-                                       const int icell,
-                                       const std::vector<double>& owner_u,
-                                       const std::vector<double>& owner_div_u) {
+void EquationNS2DNeq2Tnondim::ComputeComFlux(
+    const int num_points, std::vector<double>& flux, const int icell,
+    const std::vector<double>& owner_u,
+    const std::vector<double>& owner_div_u) {
   static std::vector<double> Ds(ns_, 0.0);
   static std::vector<double> Isx(ns_, 0.0);
   static std::vector<double> Isy(ns_, 0.0);
   static std::vector<double> hs(ns_, 0.0);
   static std::vector<double> diffflux(2 * ns_, 0.0);
+  std::vector<double> sol_jacobi(num_points * SS_, 0.0);
+  std::vector<double> owner_div_sol(num_points * S_ * 2, 0.0);
 
   const auto& species = mixture_->GetSpecies();
   const auto& hidx = mixture_->GetHeavyParticleIdx();
   const auto& eidx = mixture_->GetElectronIndex();
+  const auto& cell_points = DENEB_DATA->GetCellPoints();
+
+  std::vector<double> dim_d(ns_);
+  ComputeSolutionJacobi(num_points, sol_jacobi, owner_u);
+  gradpri2gradsol(num_points, &sol_jacobi[0], &owner_div_u[0], &owner_div_sol[0]);
 
   int ind = 0;
   double arvis = 0.0;
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_SOLUTION_PS(, owner_u);
     GET_SOLUTION_GRAD_PDS(, owner_div_u);
+    GET_CONS_SOLUTION_GRAD_PDS(, owner_div_sol);
     arvis =
         DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(icell, ipoint);
+    const double y = cell_points[icell][ipoint * D_ + 1];
 
-    // Convective flux
-    mixture_->SetDensity(d);
-    const double mixture_d = mixture_->GetTotalDensity();
-    const double mixture_p = mixture_->GetPressure(T_tr, T_eev);
-    const double beta = mixture_->GetBeta(T_tr);
+    // Convective flux    
+    mixture_->SetDensity(&dim_d[0]);
+    const double mixture_d = mixture_->GetTotalDensity() / rho_ref_;
+    const double mixture_p = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
+    const double beta = mixture_->GetBeta(dim_T_tr);
     const double a = std::sqrt((1.0 + beta) * mixture_p / mixture_d);
     double de = 0.0;
     double de_eev = 0.0;
     for (int i = 0; i < ns_; i++) {
-      const double e = species[i]->GetInternalEnergy(T_tr, T_eev);
-      const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
+      const double e = species[i]->GetInternalEnergy(dim_T_tr, dim_T_eev) / e_ref_;
+      const double e_eev =
+          species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
       de += d[i] * e;
       de_eev += d[i] * e_eev;
     }
@@ -1271,10 +1640,11 @@ void EquationNS2DNeq2T::ComputeComFlux(const int num_points,
     const double dE = de + 0.5 * (du * u + dv * v);
 
     // Viscous flux
-    const double mu = mixture_->GetViscosity(T_tr, T_eev);
-    const double k_tr = mixture_->GetTransRotationConductivity(T_tr, T_eev);
+    const double mu = mixture_->GetViscosity(dim_T_tr, dim_T_eev) / mu_ref_;
+    const double k_tr =
+        mixture_->GetTransRotationConductivity(dim_T_tr, dim_T_eev) / k_ref_;
     const double k_eev =
-        mixture_->GetElectronicVibrationConductivity(T_tr, T_eev);
+        mixture_->GetElectronicVibrationConductivity(dim_T_tr, dim_T_eev) / k_ref_;
 
     const double* Y = mixture_->GetMassFraction();
     double mixture_dx = 0.0;
@@ -1284,8 +1654,9 @@ void EquationNS2DNeq2T::ComputeComFlux(const int num_points,
       mixture_dy += dy[i];
     }
 
-    mixture_->GetDiffusivity(&Ds[0], T_tr, T_eev);
+    mixture_->GetDiffusivity(&Ds[0], dim_T_tr, dim_T_eev);
     for (int i = 0; i < ns_; i++) {
+      Ds[i] /= D_ref_;
       Isx[i] = -Ds[i] * (dx[i] - Y[i] * mixture_dx);
       Isy[i] = -Ds[i] * (dy[i] - Y[i] * mixture_dy);
     }
@@ -1316,17 +1687,18 @@ void EquationNS2DNeq2T::ComputeComFlux(const int num_points,
       diffflux[eidx + ns_] = Mw_e * sum_y;
     }
 
-    const auto txx = c23_ * mu * (2.0 * ux - vy);
+    const auto tau_ax = (std::abs(y) < 1.0e-12) ? 0.0 : static_cast<double>(ax_) * v / y;
+    const auto txx = c23_ * mu * (2.0 * ux - vy - tau_ax);
     const auto txy = mu * (uy + vx);
-    const auto tyy = c23_ * mu * (2.0 * vy - ux);
+    const auto tyy = c23_ * mu * (2.0 * vy - ux - tau_ax);
 
     double Jh_x = 0.0;
     double Jh_y = 0.0;
     double Je_eev_x = 0.0;
     double Je_eev_y = 0.0;
     for (int i = 0; i < ns_; i++) {
-      const double h = species[i]->GetEnthalpy(T_tr, T_eev);
-      const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
+      const double h = species[i]->GetEnthalpy(dim_T_tr, dim_T_eev) / e_ref_;
+      const double e_eev = species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
       Jh_x += diffflux[i] * h;
       Je_eev_x += diffflux[i] * e_eev;
       Jh_y += diffflux[i + ns_] * h;
@@ -1338,39 +1710,24 @@ void EquationNS2DNeq2T::ComputeComFlux(const int num_points,
     const double q_eev_y = k_eev * Teevy;
 
     ind = DS_ * ipoint;
-    // artificial viscosity wrong
     for (int i = 0; i < ns_; i++)
       flux[ind++] = d[i] * u - diffflux[i] - arvis * dx[i];
-    flux[ind++] = du * u + mixture_p - txx - arvis * ux;
-    flux[ind++] = du * v - txy - arvis * vx;
-    flux[ind++] = (dE + mixture_p) * u - txx * u - txy * v - q_tr_x - q_eev_x -
-                  Jh_x - arvis * Ttrx;
-    flux[ind++] = de_eev * u - q_eev_x - Je_eev_x - arvis * Teevx;
+    flux[ind++] = du * u + mixture_p - txx - arvis * dux;
+    flux[ind++] = du * v - txy - arvis * dvx;
+    flux[ind++] = (dE + mixture_p) * u - txx * u - txy * v - q_tr_x - q_eev_x - Jh_x - arvis * dEx;
+    flux[ind++] = de_eev * u - q_eev_x - Je_eev_x - arvis * de_eevx;
     for (int i = 0; i < ns_; i++)
       flux[ind++] = d[i] * v - diffflux[i + ns_] - arvis * dy[i];
-    flux[ind++] = dv * u - txy - arvis * uy;
-    flux[ind++] = dv * v + mixture_p - tyy - arvis * vy;
-    flux[ind++] = (dE + mixture_p) * v - txy * u - tyy * v - q_tr_y - q_eev_y -
-                  Jh_y - arvis * Ttry;
-    flux[ind] = de_eev * v - q_eev_y - Je_eev_y - arvis * Teevy;
-    
-    // for debug
-    //for (int i = 0; i < ns_; i++)
-    //  flux[ind++] = d[i] * u;
-    //flux[ind++] = du * u + mixture_p;
-    //flux[ind++] = du * v;
-    //flux[ind++] = (dE + mixture_p) * u;
-    //flux[ind++] = de_eev * u;
-    //for (int i = 0; i < ns_; i++)
-    //  flux[ind++] = d[i] * v;
-    //flux[ind++] = dv * u;
-    //flux[ind++] = dv * v + mixture_p;
-    //flux[ind++] = (dE + mixture_p) * v;
-    //flux[ind] = de_eev * v;
-    // end for debug
+    flux[ind++] = dv * u - txy - arvis * duy;
+    flux[ind++] = dv * v + mixture_p - tyy - arvis * dvy;
+    flux[ind++] = (dE + mixture_p) * v - txy * u - tyy * v - q_tr_y - q_eev_y - Jh_y - arvis * dEy;
+    flux[ind] = de_eev * v - q_eev_y - Je_eev_y - arvis * de_eevy;
+
+    const double fy = static_cast<double>(ax_) * (cell_points[icell][ipoint * D_ + 1] - 1.0) + 1.0;
+    cblas_dscal(DS_, fy, &flux[DS_ * ipoint], 1);
   }
 }
-void EquationNS2DNeq2T::ComputeComFluxJacobi(
+void EquationNS2DNeq2Tnondim::ComputeComFluxJacobi(
     const int num_points, std::vector<double>& flux_jacobi,
     std::vector<double>& flux_grad_jacobi, const int icell,
     const std::vector<double>& owner_u,
@@ -1383,6 +1740,8 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
   static std::vector<double> hs(ns_, 0.0);
   static std::vector<aDual> flux1(DS_, aDual(S_));
   static std::vector<aDual> flux2(DS_, aDual(DS_));
+  std::vector<double> sol_jacobi(num_points * SS_, 0.0);
+  std::vector<double> owner_div_sol(num_points * S_ * 2, 0.0);
 
   int ind = 0;
   double arvis = 0.0;
@@ -1390,46 +1749,67 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
   const auto& species = mixture_->GetSpecies();
   const auto& hidx = mixture_->GetHeavyParticleIdx();
   const auto& eidx = mixture_->GetElectronIndex();
+  const auto& cell_points = DENEB_DATA->GetCellPoints();
 
   // flux jacobi
+  std::vector<double> dim_d(ns_);
+  ComputeSolutionJacobi(num_points, sol_jacobi, owner_u);
+  gradpri2gradsol(num_points, &sol_jacobi[0], &owner_div_u[0], &owner_div_sol[0]);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    const double y = cell_points[icell][ipoint * D_ + 1];
+    const double fy = static_cast<double>(ax_) * (cell_points[icell][ipoint * D_ + 1] - 1.0) + 1.0;
     {
       // ps
       ind = S_ * ipoint;
       std::vector<aDual> d(ns_, aDual(S_));
-      for (int i = 0; i < ns_; i++) d[i] = aDual(S_, owner_u[ind++], i);
+      for (int i = 0; i < ns_; i++) {
+        dim_d[i] = owner_u[ind] * rho_ref_;
+        d[i] = aDual(S_, owner_u[ind++], i);
+      }
       aDual u(S_, owner_u[ind++], ns_);
       aDual v(S_, owner_u[ind++], ns_ + 1);
       const double& T_tr = owner_u[ind++];
       const double& T_eev = owner_u[ind];
+      const double dim_T_tr = T_tr * T_ref_;
+      const double dim_T_eev = T_eev * T_ref_;
 
       GET_SOLUTION_GRAD_PDS(, owner_div_u);
+      GET_CONS_SOLUTION_GRAD_PDS(, owner_div_sol);
       arvis = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(icell,
                                                                       ipoint);
 
       // Convective flux
-      mixture_->SetDensity(&owner_u[S_ * ipoint]);
-      aDual mixture_d(S_, mixture_->GetTotalDensity());
+      mixture_->SetDensity(&dim_d[0]);
+      aDual mixture_d(S_, mixture_->GetTotalDensity() / rho_ref_);
       for (int i = 0; i < ns_; i++) mixture_d.df[i] = 1.0;
 
       aDual mixture_p(S_);
       mixture_p.f =
-          mixture_->GetPressureJacobian(T_tr, T_eev, &mixture_p.df[0]);
+          mixture_->GetPressureJacobian(dim_T_tr, dim_T_eev, &mixture_p.df[0]);
       std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
       std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
+      mixture_p.f /= p_ref_;
+      for (int i = 0; i < ns_; i++)
+        mixture_p.df[i] *= rho_ref_ / p_ref_;
+      mixture_p.df[ns_ + 2] *= T_ref_ / p_ref_;
+      mixture_p.df[ns_ + 3] *= T_ref_ / p_ref_;
 
       aDual beta(S_);
-      beta.f = mixture_->GetBetaJacobian(T_tr, &beta.df[0]);
+      beta.f = mixture_->GetBetaJacobian(dim_T_tr, &beta.df[0]);
+      for (int i = 0; i < ns_; i++) beta.df[i] *= rho_ref_;
+      beta.df[ns_ + 2] *= T_ref_;
+      beta.df[ns_ + 3] *= T_ref_;
 
       const auto a = std::sqrt((1.0 + beta) * mixture_p / mixture_d);
       aDual de(S_);
       aDual de_eev(S_);
       for (int i = 0; i < ns_; i++) {
-        const auto e = species[i]->GetInternalEnergy(T_tr, T_eev);
-        const auto e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
-        const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(T_tr);
+        const auto e = species[i]->GetInternalEnergy(dim_T_tr, dim_T_eev) / e_ref_;
+        const auto e_eev = species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
+        const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(dim_T_tr) * T_ref_ / e_ref_;
         const auto Cv_eev =
-            species[i]->GetElectronicVibrationSpecificHeat(T_eev);
+            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev) * T_ref_ /
+            e_ref_;
 
         de.f += d[i].f * e;
         de.df[i] = e;
@@ -1445,11 +1825,12 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
       const auto dE = de + 0.5 * (du * u + dv * v);
 
       // Viscous flux
-      const auto mu = mixture_->GetViscosity(T_tr, T_eev);
-      const auto k_tr = mixture_->GetTransRotationConductivity(T_tr, T_eev);
-      const auto k_eev =
-          mixture_->GetElectronicVibrationConductivity(T_tr, T_eev);
-      mixture_->GetDiffusivity(&Ds[0], T_tr, T_eev);
+      const double mu = mixture_->GetViscosity(dim_T_tr, dim_T_eev) / mu_ref_;
+      const double k_tr =
+          mixture_->GetTransRotationConductivity(dim_T_tr, dim_T_eev) / k_ref_;
+      const double k_eev =
+          mixture_->GetElectronicVibrationConductivity(dim_T_tr, dim_T_eev) /
+          k_ref_;
 
       std::vector<aDual> Y(ns_, aDual(S_));
       for (int i = 0; i < ns_; i++) Y[i] = d[i] / mixture_d;
@@ -1463,7 +1844,9 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
 
       std::vector<aDual> Isx(ns_, aDual(S_));
       std::vector<aDual> Isy(ns_, aDual(S_));
+      mixture_->GetDiffusivity(&Ds[0], dim_T_tr, dim_T_eev);
       for (int i = 0; i < ns_; i++) {
+        Ds[i] /= D_ref_;
         Isx[i] = -Ds[i] * (dx[i] - Y[i] * mixture_dx);
         Isy[i] = -Ds[i] * (dy[i] - Y[i] * mixture_dy);
       }
@@ -1475,7 +1858,7 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
         Iy_sum = Iy_sum + Isy[idx];
       }
 
-      std::vector<aDual> diffflux(2 * ns_, aDual(S_));  // check cost
+      std::vector<aDual> diffflux(2 * ns_, aDual(S_));
       for (const int& idx : hidx) {
         diffflux[idx] = -Isx[idx] + Y[idx] * Ix_sum;
         diffflux[idx + ns_] = -Isy[idx] + Y[idx] * Iy_sum;
@@ -1494,21 +1877,25 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
         diffflux[eidx + ns_] = Mw_e * sum_y;
       }
 
-      const auto txx = c23_ * mu * (2.0 * ux - vy);
+      const auto tau_ax = (std::abs(y) < 1.0e-12) ? aDual(S_, 0.0) : static_cast<double>(ax_) * v / y;
+      const auto txx = c23_ * mu * (2.0 * ux - vy - tau_ax);
       const auto txy = mu * (uy + vx);
-      const auto tyy = c23_ * mu * (2.0 * vy - ux);
+      const auto tyy = c23_ * mu * (2.0 * vy - ux - tau_ax);
 
       aDual Jh_x(S_);
       aDual Jh_y(S_);
       aDual Je_eev_x(S_);
       aDual Je_eev_y(S_);
       for (int i = 0; i < ns_; i++) {
-        const double h = species[i]->GetEnthalpy(T_tr, T_eev);
-        const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
-        const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(T_tr);
+        const double h = species[i]->GetEnthalpy(dim_T_tr, dim_T_eev) / e_ref_;
+        const double e_eev =
+            species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
+        const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(dim_T_tr) *
+                           T_ref_ / e_ref_;
         const auto Cv_eev =
-            species[i]->GetElectronicVibrationSpecificHeat(T_eev);
-        const double R = species[i]->GetSpecificGasConstant();
+            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev) * T_ref_ /
+            e_ref_;
+        const double R = species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
 
         const auto Cp_tr = Cv_tr + (i == eidx) ? 0.0 : R;
         const auto Cp_eev = Cv_eev + (i == eidx) ? R : 0.0;
@@ -1532,42 +1919,26 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
       const aDual q_eev_y(S_, k_eev * Teevy);
 
       ind = 0;
-      
       for (int i = 0; i < ns_; i++)
         flux1[ind++] = d[i] * u - diffflux[i] - arvis * dx[i];
-      flux1[ind++] = du * u + mixture_p - txx - arvis * ux;
-      flux1[ind++] = du * v - txy - arvis * vx;
-      flux1[ind++] = (dE + mixture_p) * u - txx * u - txy * v - q_tr_x -
-                     q_eev_x - Jh_x - arvis * Ttrx;
-      flux1[ind++] = de_eev * u - q_eev_x - Je_eev_x - arvis * Teevx;
+      flux1[ind++] = du * u + mixture_p - txx - arvis * dux;
+      flux1[ind++] = du * v - txy - arvis * dvx;
+      flux1[ind++] = (dE + mixture_p) * u - txx * u - txy * v - q_tr_x - q_eev_x - Jh_x - arvis * dEx;
+      flux1[ind++] = de_eev * u - q_eev_x - Je_eev_x - arvis * de_eevx;
       for (int i = 0; i < ns_; i++)
         flux1[ind++] = d[i] * v - diffflux[i + ns_] - arvis * dy[i];
-      flux1[ind++] = dv * u - txy - arvis * uy;
-      flux1[ind++] = dv * v + mixture_p - tyy - arvis * vy;
-      flux1[ind++] = (dE + mixture_p) * v - txy * u - tyy * v - q_tr_y -
-                     q_eev_y - Jh_y - arvis * Ttry;
-      flux1[ind] = de_eev * v - q_eev_y - Je_eev_y - arvis * Teevy;
-      
-      // for debug
-      //for (int i = 0; i < ns_; i++)
-      //  flux1[ind++] = d[i] * u;
-      //flux1[ind++] = du * u + mixture_p;
-      //flux1[ind++] = du * v;
-      //flux1[ind++] = (dE + mixture_p) * u;
-      //flux1[ind++] = de_eev * u;
-      //for (int i = 0; i < ns_; i++)
-      //  flux1[ind++] = d[i] * v;
-      //flux1[ind++] = dv * u;
-      //flux1[ind++] = dv * v + mixture_p;
-      //flux1[ind++] = (dE + mixture_p) * v;
-      //flux1[ind] = de_eev * v;
-      // end for debug
+      flux1[ind++] = dv * u - txy - arvis * duy;
+      flux1[ind++] = dv * v + mixture_p - tyy - arvis * dvy;
+      flux1[ind++] = (dE + mixture_p) * v - txy * u - tyy * v - q_tr_y - q_eev_y - Jh_y - arvis * dEy;
+      flux1[ind] = de_eev * v - q_eev_y - Je_eev_y - arvis * de_eevy;
 
       // pdss
       ind = DSS_ * ipoint;
       for (int ds = 0; ds < DS_; ds++)
         for (int istate = 0; istate < S_; istate++)
           flux_jacobi[ind++] = flux1[ds].df[istate];
+
+      cblas_dscal(DSS_, fy, &flux_jacobi[DSS_ * ipoint], 1);
     }
     {
       GET_SOLUTION_PS(, owner_u);
@@ -1589,12 +1960,13 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
       const aDual Teevy(DS_, owner_div_u[ind], 2 * (ns_ + 3) + 1);
 
       // Viscous flux
-      mixture_->SetDensity(&owner_u[S_ * ipoint]);
-      const auto mu = mixture_->GetViscosity(T_tr, T_eev);
-      const auto k_tr = mixture_->GetTransRotationConductivity(T_tr, T_eev);
-      const auto k_eev =
-          mixture_->GetElectronicVibrationConductivity(T_tr, T_eev);
-      mixture_->GetDiffusivity(&Ds[0], T_tr, T_eev);
+      mixture_->SetDensity(&dim_d[0]);
+      const double mu = mixture_->GetViscosity(dim_T_tr, dim_T_eev) / mu_ref_;
+      const double k_tr =
+          mixture_->GetTransRotationConductivity(dim_T_tr, dim_T_eev) / k_ref_;
+      const double k_eev =
+          mixture_->GetElectronicVibrationConductivity(dim_T_tr, dim_T_eev) /
+          k_ref_;
 
       const double* Y = mixture_->GetMassFraction();
       aDual mixture_dx(DS_);
@@ -1606,7 +1978,9 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
 
       std::vector<aDual> Isx(ns_, aDual(DS_));
       std::vector<aDual> Isy(ns_, aDual(DS_));
+      mixture_->GetDiffusivity(&Ds[0], dim_T_tr, dim_T_eev);
       for (int i = 0; i < ns_; i++) {
+        Ds[i] /= D_ref_;
         Isx[i] = -Ds[i] * (dx[i] - Y[i] * mixture_dx);
         Isy[i] = -Ds[i] * (dy[i] - Y[i] * mixture_dy);
       }
@@ -1618,7 +1992,7 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
         Iy_sum = Iy_sum + Isy[idx];
       }
 
-      std::vector<aDual> diffflux(2 * ns_, aDual(DS_));  // check cost
+      std::vector<aDual> diffflux(2 * ns_, aDual(DS_));
 
       for (const int& idx : hidx) {
         diffflux[idx] = -Isx[idx] + Y[idx] * Ix_sum;
@@ -1638,9 +2012,10 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
         diffflux[eidx + ns_] = Mw_e * sum_y;
       }
 
-      const auto txx = c23_ * mu * (2.0 * ux - vy);
+      const auto tau_ax = (std::abs(y) < 1.0e-12) ? aDual(DS_, 0.0) : aDual(DS_,  static_cast<double>(ax_) * v / y);
+      const auto txx = c23_ * mu * (2.0 * ux - vy - tau_ax);
       const auto txy = mu * (uy + vx);
-      const auto tyy = c23_ * mu * (2.0 * vy - ux);
+      const auto tyy = c23_ * mu * (2.0 * vy - ux - tau_ax);
 
       aDual Jh_x(DS_);
       aDual Jh_y(DS_);
@@ -1648,8 +2023,9 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
       aDual Je_eev_y(DS_);
 
       for (int i = 0; i < ns_; i++) {
-        const double h = species[i]->GetEnthalpy(T_tr, T_eev);
-        const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
+        const double h = species[i]->GetEnthalpy(dim_T_tr, dim_T_eev) / e_ref_;
+        const double e_eev =
+            species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
 
         Jh_x = Jh_x + diffflux[i] * h;
         Jh_y = Jh_y + diffflux[i + ns_] * h;
@@ -1663,120 +2039,178 @@ void EquationNS2DNeq2T::ComputeComFluxJacobi(
       const auto q_eev_y = k_eev * Teevy;
 
       ind = 0;
-      
-      for (int i = 0; i < ns_; i++) flux2[ind++] = -diffflux[i] - arvis * dx[i];
-      flux2[ind++] = -txx - arvis * ux;
-      flux2[ind++] = -txy - arvis * vx;
-      flux2[ind++] =
-          -txx * u - txy * v - q_tr_x - q_eev_x - Jh_x - arvis * Ttrx;
-      flux2[ind++] = -q_eev_x - Je_eev_x - arvis * Teevx;
-      for (int i = 0; i < ns_; i++)
-        flux2[ind++] = -diffflux[i + ns_] - arvis * dy[i];
-      flux2[ind++] = -txy - arvis * uy;
-      flux2[ind++] = -tyy - arvis * vy;
-      flux2[ind++] =
-          -txy * u - tyy * v - q_tr_y - q_eev_y - Jh_y - arvis * Ttry;
-      flux2[ind] = -q_eev_y - Je_eev_y - arvis * Teevy;
-      
+      for (int i = 0; i < ns_; i++) flux2[ind++] = -diffflux[i];
+      flux2[ind++] = -txx;
+      flux2[ind++] = -txy;
+      flux2[ind++] = -txx * u - txy * v - q_tr_x - q_eev_x - Jh_x;
+      flux2[ind++] = -q_eev_x - Je_eev_x;
+      for (int i = 0; i < ns_; i++) flux2[ind++] = -diffflux[i + ns_];
+      flux2[ind++] = -txy;
+      flux2[ind++] = -tyy;
+      flux2[ind++] = -txy * u - tyy * v - q_tr_y - q_eev_y - Jh_y;
+      flux2[ind] = -q_eev_y - Je_eev_y;
 
       // pdssd
       ind = DDSS_ * ipoint;
       for (int ds = 0; ds < DS_; ds++)
         for (int sd = 0; sd < DS_; sd++)
           flux_grad_jacobi[ind++] = flux2[ds].df[sd];
+
+      for (int istate = 0; istate < S_; istate++)
+        for (int jstate = 0; jstate < S_; jstate++)
+          for (int idim = 0; idim < D_; idim++) {
+            const int irow = idim * S_ + istate;
+            const int icolumn = jstate * D_ + idim;
+            flux_grad_jacobi[DDSS_ * ipoint + irow * DS_ + icolumn] -= arvis * sol_jacobi[ipoint * SS_ + istate * S_ + jstate];
+          }
+
+      cblas_dscal(DDSS_, fy, &flux_grad_jacobi[DDSS_ * ipoint], 1);
     }
   }
 }
-void EquationNS2DNeq2T::ComputeSource(const int num_points,
-                                      std::vector<double>& source,
-                                      const int icell,
-                                      const std::vector<double>& owner_u,
-                                      const std::vector<double>& owner_div_u) {
+void EquationNS2DNeq2Tnondim::ComputeSource(
+    const int num_points, std::vector<double>& source, const int icell,
+    const std::vector<double>& owner_u,
+    const std::vector<double>& owner_div_u) {
+  const auto& cell_points = DENEB_DATA->GetCellPoints();
+
   int ind = 0;
+  const double inv_rhov = 1.0 / (rho_ref_ * v_ref_);
+  const double inv_rhoev = 1.0 / (rho_ref_ * e_ref_ * v_ref_);
+  std::vector<double> dim_d(ns_);
+
+  bool axi_flag = false;
+  if (ax_ == 1) axi_flag = true;
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_SOLUTION_PS(, owner_u);
     GET_SOLUTION_GRAD_PDS(, owner_div_u);
+    const double y = cell_points[icell][ipoint * D_ + 1];
+    const double fy = static_cast<double>(ax_) * (y - 1.0) + 1.0;
 
     ind = S_ * ipoint;
-    mixture_->SetDensity(d);
-    const double* rate = mixture_->GetSpeciesReactionRate(T_tr, T_eev);
-    // for (int i = 0; i < ns_; i++) source[ind++] = rate[i];
-    for (int i = 0; i < ns_; i++) source[ind++] = 0.0; // for debug
+    mixture_->SetDensity(&dim_d[0]);
+    const double* rate = mixture_->GetSpeciesReactionRate(dim_T_tr, dim_T_eev);
+    for (int i = 0; i < ns_; i++) source[ind++] = rate[i] * L_ref_ * inv_rhov * fy;
 
-    const double ct = mixture_->GetReactionTransferRate(T_tr, T_eev);
-    const double vt = mixture_->GetVTTransferRate(T_tr, T_eev);
-    const double et = mixture_->GetETTransferRate(T_tr, T_eev);
+    const double ct = mixture_->GetReactionTransferRate(dim_T_tr, dim_T_eev);
+    const double vt = mixture_->GetVTTransferRate(dim_T_tr, dim_T_eev);
+    const double et = mixture_->GetETTransferRate(dim_T_tr, dim_T_eev);
 
-    const auto p = mixture_->GetPressure(T_tr, T_eev);
-    const auto mu = mixture_->GetViscosity(T_tr, T_eev);
+    double p = 0.0;
+    double mu = 0.0;
+    double ttt = 0.0;
+    if (axi_flag) {
+      p = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
+      mu = mixture_->GetViscosity(dim_T_tr, dim_T_eev) / mu_ref_;
+      ttt = c23_ * mu * (2.0 * v / y - ux - vy);
+    }
 
     source[ind++] = 0.0;
+    source[ind++] = static_cast<double>(ax_) * (p - ttt);
     source[ind++] = 0.0;
-    source[ind++] = 0.0;
-    // source[ind] = ct + vt + et;
-    source[ind] = 0.0; // for debug
+    source[ind] = (ct + vt + et) * L_ref_ * inv_rhoev * fy;
   }
 }
-void EquationNS2DNeq2T::ComputeSourceJacobi(
+void EquationNS2DNeq2Tnondim::ComputeSourceJacobi(
     const int num_points, std::vector<double>& source_jacobi, const int icell,
     const std::vector<double>& owner_u,
     const std::vector<double>& owner_div_u) {
+  const auto& cell_points = DENEB_DATA->GetCellPoints();
+
   static std::vector<double> rate_jac(ns_ * (ns_ + 2), 0.0);
   static std::vector<double> transfer_jac(ns_ + 2, 0.0);
 
+  std::vector<double> dim_d(ns_);
+
   memset(&source_jacobi[0], 0, num_points * SS_ * sizeof(double));
 
-  // for debug
-  /* int ind = 0;  
+  const double t_ref = L_ref_ / v_ref_;
+  const double inv_rho_ref = 1.0 / rho_ref_;
+  const double inv_e_ref = 1.0 / e_ref_;
+  int ind = 0;
+  bool axi_flag = false;
+  if (ax_ == 1) axi_flag = true;
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_SOLUTION_PS(, owner_u);
     GET_SOLUTION_GRAD_PDS(, owner_div_u);
 
-    mixture_->SetDensity(d);
+    double* source_pri_jacobi = &source_jacobi[SS_ * ipoint];
 
-    aDual mixture_p(S_);
-    mixture_p.f = mixture_->GetPressureJacobian(T_tr, T_eev, &mixture_p.df[0]);
-    std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
-    std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
-
-    const auto mu = mixture_->GetViscosity(T_tr, T_eev);
-
-    mixture_->GetSpeciesReactionRateJacobian(T_tr, T_eev, &rate_jac[0]);
+    mixture_->SetDensity(&dim_d[0]);
+    mixture_->GetSpeciesReactionRateJacobian(dim_T_tr, dim_T_eev, &rate_jac[0]);
     for (int i = 0; i < ns_; i++) {
       for (int j = 0; j < ns_; j++)
-        source_jacobi[i * S_ + j] = rate_jac[i * (ns_ + 2) + j];
-      source_jacobi[i * S_ + (ns_ + 2)] = rate_jac[i * (ns_ + 2) + ns_];
-      source_jacobi[i * S_ + (ns_ + 3)] = rate_jac[i * (ns_ + 2) + (ns_ + 1)];
+        source_pri_jacobi[i * S_ + j] = rate_jac[i * (ns_ + 2) + j] * t_ref;
+      source_pri_jacobi[i * S_ + (ns_ + 2)] =
+        rate_jac[i * (ns_ + 2) + ns_] * t_ref * T_ref_ * inv_rho_ref;
+      source_pri_jacobi[i * S_ + (ns_ + 3)] =
+        rate_jac[i * (ns_ + 2) + (ns_ + 1)] * t_ref * T_ref_ * inv_rho_ref;
     }
 
-    mixture_->GetReactionTransferRateJacobian(T_tr, T_eev, &transfer_jac[0]);
+    mixture_->GetReactionTransferRateJacobian(dim_T_tr, dim_T_eev,
+      &transfer_jac[0]);
     for (int j = 0; j < ns_; j++)
-      source_jacobi[(ns_ + 3) * S_ + j] = transfer_jac[j];
-    source_jacobi[(ns_ + 3) * S_ + (ns_ + 2)] = transfer_jac[ns_];
-    source_jacobi[(ns_ + 3) * S_ + (ns_ + 3)] = transfer_jac[ns_ + 1];
+      source_pri_jacobi[(ns_ + 3) * S_ + j] =
+      transfer_jac[j] * t_ref * inv_e_ref;
+    source_pri_jacobi[(ns_ + 3) * S_ + (ns_ + 2)] =
+      transfer_jac[ns_] * t_ref * T_ref_ * inv_e_ref;
+    source_pri_jacobi[(ns_ + 3) * S_ + (ns_ + 3)] =
+      transfer_jac[ns_ + 1] * t_ref * T_ref_ * inv_e_ref;
 
-    mixture_->GetVTTransferRateJacobian(T_tr, T_eev, &transfer_jac[0]);
+    mixture_->GetVTTransferRateJacobian(dim_T_tr, dim_T_eev, &transfer_jac[0]);
     for (int j = 0; j < ns_; j++)
-      source_jacobi[(ns_ + 3) * S_ + j] += transfer_jac[j];
-    source_jacobi[(ns_ + 3) * S_ + (ns_ + 2)] += transfer_jac[ns_];
-    source_jacobi[(ns_ + 3) * S_ + (ns_ + 3)] += transfer_jac[ns_ + 1];
+      source_pri_jacobi[(ns_ + 3) * S_ + j] +=
+      transfer_jac[j] * t_ref * inv_e_ref;
+    source_pri_jacobi[(ns_ + 3) * S_ + (ns_ + 2)] +=
+      transfer_jac[ns_] * t_ref * T_ref_ * inv_e_ref;
+    source_pri_jacobi[(ns_ + 3) * S_ + (ns_ + 3)] +=
+      transfer_jac[ns_ + 1] * t_ref * T_ref_ * inv_e_ref;
 
+    if (axi_flag) {
+      const double y = cell_points[icell][ipoint * D_ + 1];
+      const double fy = static_cast<double>(ax_) * (y - 1.0) + 1.0;
+      cblas_dscal(SS_, fy, source_pri_jacobi, 1);
+
+      aDual vaxi(S_, v, ns_ + 1);
+      aDual mixture_p(S_);
+      mixture_p.f = mixture_->GetPressureJacobian(dim_T_tr, dim_T_eev,
+        &mixture_p.df[0]);
+      std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
+      std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
+      mixture_p.f /= p_ref_;
+      for (int i = 0; i < ns_; i++) mixture_p.df[i] *= rho_ref_ / p_ref_;
+      mixture_p.df[ns_ + 2] *= T_ref_ / p_ref_;
+      mixture_p.df[ns_ + 3] *= T_ref_ / p_ref_;
+
+      const auto mu = mixture_->GetViscosity(dim_T_tr, dim_T_eev) / mu_ref_;
+      const auto ttt = c23_ * mu * (2.0 * vaxi / y - ux - vy);
+      const auto source_axi = static_cast<double>(ax_) * (mixture_p - ttt);
+
+      for (int j = 0; j < S_; j++)
+        source_pri_jacobi[(ns_ + 1) * S_ + j] += source_axi.df[j];
+    }
     // Where is ett?
-  }*/
+  }
 }
-void EquationNS2DNeq2T::ComputeSolutionJacobi(
+void EquationNS2DNeq2Tnondim::ComputeSolutionJacobi(
   const int num_points, std::vector<double>& jacobi,
   const std::vector<double>& owner_u) {
   const auto& species = mixture_->GetSpecies();
   std::vector<aDual> values(S_, aDual(S_));
+  std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     const double* sol = &owner_u[ipoint * S_];
     std::vector<aDual> d(ns_, aDual(S_));
-    for (int i = 0; i < ns_; i++) d[i] = aDual(S_, sol[i], i);
+    for (int i = 0; i < ns_; i++) {
+      dim_d[i] = sol[i] * rho_ref_;
+      d[i] = aDual(S_, sol[i], i);
+    }
     aDual u(S_, sol[ns_], ns_);
     aDual v(S_, sol[ns_ + 1], ns_ + 1);
     const auto& T_tr = sol[ns_ + 2];
     const auto& T_eev = sol[ns_ + 3];
+    const double dim_T_tr = T_tr * T_ref_;
+    const double dim_T_eev = T_eev * T_ref_;
 
     aDual mixture_d(S_);
     for (int i = 0; i < ns_; i++) mixture_d = mixture_d + d[i];
@@ -1788,12 +2222,15 @@ void EquationNS2DNeq2T::ComputeSolutionJacobi(
     aDual de(S_, 0.0);
     aDual de_eev(S_, 0.0);
 
-    mixture_->SetDensity(sol);
+    mixture_->SetDensity(&dim_d[0]);
     for (int i = 0; i < ns_; i++) {
-      const auto e = species[i]->GetInternalEnergy(T_tr, T_eev);
-      const auto e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
-      const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(T_tr);
-      const auto Cv_eev = species[i]->GetElectronicVibrationSpecificHeat(T_eev);
+      const auto e = species[i]->GetInternalEnergy(dim_T_tr, dim_T_eev) / e_ref_;
+      const auto e_eev =
+          species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
+      const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(dim_T_tr) * T_ref_ / e_ref_;
+      const auto Cv_eev =
+          species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev) * T_ref_ /
+          e_ref_;
 
       de.f += d[i].f * e;
       de.df[i] = e;
@@ -1804,17 +2241,16 @@ void EquationNS2DNeq2T::ComputeSolutionJacobi(
       de_eev.df[i] = e_eev;
       de_eev.df[ns_ + 3] += d[i].f * Cv_eev;
     }
-    if (T_eev < 250.0) {
+    if (dim_T_eev < 250.0 / T_ref_) {
       double sum = 0.0;
       for (int i = 0; i < ns_; i++) {
         const auto Cv_eev =
-            species[i]->GetElectronicVibrationSpecificHeat(T_eev + 10.0);
+            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev + 10.0) * T_ref_ / e_ref_;
         sum += d[i].f * Cv_eev;
       }
       de_eev.df[ns_ + 3] = sum;
       de.df[ns_ + 3] = sum;
     }
-      
     values[ns_ + 2] = de + 0.5 * mixture_d * (u * u + v * v);
     values[ns_ + 3] = de_eev;
 
@@ -1823,12 +2259,13 @@ void EquationNS2DNeq2T::ComputeSolutionJacobi(
       for (int j = 0; j < S_; j++) jacobi[ind++] = values[i].df[j];
   }
 }
-void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
-                                          std::vector<double>& flux,
-                                          FACE_INPUTS) {
+void EquationNS2DNeq2Tnondim::ComputeNumFluxLLF(const int num_points,
+                                                std::vector<double>& flux,
+                                                FACE_INPUTS, const std::vector<double>& coords) {
   const auto& species = mixture_->GetSpecies();
   const auto& hidx = mixture_->GetHeavyParticleIdx();
   const auto& eidx = mixture_->GetElectronIndex();
+  const auto& face_points = DENEB_DATA->GetFacePoints();
 
   static std::vector<double> Ds(ns_, 0.0);
   static std::vector<double> Isx(ns_, 0.0);
@@ -1836,10 +2273,20 @@ void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
   static std::vector<double> hs(ns_, 0.0);
   static std::vector<double> diffflux_o(2 * ns_, 0.0);
   static std::vector<double> diffflux_n(2 * ns_, 0.0);
+  std::vector<double> owner_sol_jacobi(num_points * SS_, 0.0);
+  std::vector<double> neighbor_sol_jacobi(num_points * SS_, 0.0);
+  std::vector<double> owner_div_sol(num_points * S_ * 2, 0.0);
+  std::vector<double> neighbor_div_sol(num_points * S_ * 2, 0.0);
 
   int ind = 0;
   double arvis_o = 0.0;
   double arvis_n = 0.0;
+  std::vector<double> dim_d_o(ns_);
+  std::vector<double> dim_d_n(ns_);
+  ComputeSolutionJacobi(num_points, owner_sol_jacobi, owner_u);
+  ComputeSolutionJacobi(num_points, neighbor_sol_jacobi, neighbor_u);
+  gradpri2gradsol(num_points, &owner_sol_jacobi[0], &owner_div_u[0], &owner_div_sol[0]);
+  gradpri2gradsol(num_points, &neighbor_sol_jacobi[0], &neighbor_div_u[0], &neighbor_div_sol[0]);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_NORMAL_PD(normal);
 
@@ -1849,24 +2296,30 @@ void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
     GET_SOLUTION_GRAD_PDS(_o, owner_div_u);
     GET_SOLUTION_GRAD_PDS(_n, neighbor_div_u);
 
+    GET_CONS_SOLUTION_GRAD_PDS(_o, owner_div_sol);
+    GET_CONS_SOLUTION_GRAD_PDS(_n, neighbor_div_sol);
+
     arvis_o = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(
         owner_cell, ipoint);
     arvis_n = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(
         neighbor_cell, ipoint);
 
+    const double y = coords[ipoint * D_ + 1];
+
     // Owner Flux
     // Convective flux
-    mixture_->SetDensity(d_o);
-    const double mixture_d_o = mixture_->GetTotalDensity();
-    const double mixture_p_o = mixture_->GetPressure(T_tr_o, T_eev_o);
-    const double beta_o = mixture_->GetBeta(T_tr_o);
+    mixture_->SetDensity(&dim_d_o[0]);
+    const double mixture_d_o = mixture_->GetTotalDensity() / rho_ref_;
+    const double mixture_p_o = mixture_->GetPressure(dim_T_tr_o, dim_T_eev_o) / p_ref_;
+    const double beta_o = mixture_->GetBeta(dim_T_tr_o);
     const double a_o = std::sqrt((1.0 + beta_o) * mixture_p_o / mixture_d_o);
     const double V_o = u_o * nx + v_o * ny;
     double de_o = 0.0;
     double de_eev_o = 0.0;
     for (int i = 0; i < ns_; i++) {
-      const double e_o = species[i]->GetInternalEnergy(T_tr_o, T_eev_o);
-      const double e_eev_o = species[i]->GetElectronicVibrationEnergy(T_eev_o);
+      const double e_o = species[i]->GetInternalEnergy(dim_T_tr_o, dim_T_eev_o) / e_ref_;
+      const double e_eev_o =
+          species[i]->GetElectronicVibrationEnergy(dim_T_eev_o) / e_ref_;
       de_o += d_o[i] * e_o;
       de_eev_o += d_o[i] * e_eev_o;
     }
@@ -1875,11 +2328,11 @@ void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
     const double dE_o = de_o + 0.5 * (du_o * u_o + dv_o * v_o);
 
     // Viscous flux
-    const double mu_o = mixture_->GetViscosity(T_tr_o, T_eev_o);
+    const double mu_o = mixture_->GetViscosity(dim_T_tr_o, dim_T_eev_o) / mu_ref_;
     const double k_tr_o =
-        mixture_->GetTransRotationConductivity(T_tr_o, T_eev_o);
+        mixture_->GetTransRotationConductivity(dim_T_tr_o, dim_T_eev_o) / k_ref_;
     const double k_eev_o =
-        mixture_->GetElectronicVibrationConductivity(T_tr_o, T_eev_o);
+        mixture_->GetElectronicVibrationConductivity(dim_T_tr_o, dim_T_eev_o) / k_ref_;
 
     const double* Y_o = mixture_->GetMassFraction();
     double mixture_dx_o = 0.0;
@@ -1889,8 +2342,9 @@ void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
       mixture_dy_o += dy_o[i];
     }
 
-    mixture_->GetDiffusivity(&Ds[0], T_tr_o, T_eev_o);
+    mixture_->GetDiffusivity(&Ds[0], dim_T_tr_o, dim_T_eev_o);
     for (int i = 0; i < ns_; i++) {
+      Ds[i] /= D_ref_;
       Isx[i] = -Ds[i] * (dx_o[i] - Y_o[i] * mixture_dx_o);
       Isy[i] = -Ds[i] * (dy_o[i] - Y_o[i] * mixture_dy_o);
     }
@@ -1921,17 +2375,19 @@ void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
       diffflux_o[eidx + ns_] = Mw_e * sum_y;
     }
 
-    const auto txx_o = c23_ * mu_o * (2.0 * ux_o - vy_o);
+    auto tau_ax_o = (std::abs(y) < 1.0e-12) ? 0.0 : static_cast<double>(ax_) * v_o / y;
+    const auto txx_o = c23_ * mu_o * (2.0 * ux_o - vy_o - tau_ax_o);
     const auto txy_o = mu_o * (uy_o + vx_o);
-    const auto tyy_o = c23_ * mu_o * (2.0 * vy_o - ux_o);
+    const auto tyy_o = c23_ * mu_o * (2.0 * vy_o - ux_o - tau_ax_o);
 
     double Jh_x_o = 0.0;
     double Jh_y_o = 0.0;
     double Je_eev_x_o = 0.0;
     double Je_eev_y_o = 0.0;
     for (int i = 0; i < ns_; i++) {
-      const double h = species[i]->GetEnthalpy(T_tr_o, T_eev_o);
-      const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev_o);
+      const double h = species[i]->GetEnthalpy(dim_T_tr_o, dim_T_eev_o) / e_ref_;
+      const double e_eev =
+          species[i]->GetElectronicVibrationEnergy(dim_T_eev_o) / e_ref_;
       Jh_x_o += diffflux_o[i] * h;
       Je_eev_x_o += diffflux_o[i] * e_eev;
       Jh_y_o += diffflux_o[i + ns_] * h;
@@ -1944,17 +2400,17 @@ void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
 
     // Neighbor flux
     // Convective flux
-    mixture_->SetDensity(d_n);
-    const double mixture_d_n = mixture_->GetTotalDensity();
-    const double mixture_p_n = mixture_->GetPressure(T_tr_n, T_eev_n);
-    const double beta_n = mixture_->GetBeta(T_tr_n);
+    mixture_->SetDensity(&dim_d_n[0]);
+    const double mixture_d_n = mixture_->GetTotalDensity() / rho_ref_;
+    const double mixture_p_n = mixture_->GetPressure(dim_T_tr_n, dim_T_eev_n) / p_ref_;
+    const double beta_n = mixture_->GetBeta(dim_T_tr_n);
     const double a_n = std::sqrt((1.0 + beta_n) * mixture_p_n / mixture_d_n);
     const double V_n = u_n * nx + v_n * ny;
     double de_n = 0.0;
     double de_eev_n = 0.0;
     for (int i = 0; i < ns_; i++) {
-      const double e_n = species[i]->GetInternalEnergy(T_tr_n, T_eev_n);
-      const double e_eev_n = species[i]->GetElectronicVibrationEnergy(T_eev_n);
+      const double e_n = species[i]->GetInternalEnergy(dim_T_tr_n, dim_T_eev_n) / e_ref_;
+      const double e_eev_n = species[i]->GetElectronicVibrationEnergy(dim_T_eev_n) / e_ref_;
       de_n += d_n[i] * e_n;
       de_eev_n += d_n[i] * e_eev_n;
     }
@@ -1963,11 +2419,11 @@ void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
     const double dE_n = de_n + 0.5 * (du_n * u_n + dv_n * v_n);
 
     // Viscous flux
-    const double mu_n = mixture_->GetViscosity(T_tr_n, T_eev_n);
+    const double mu_n = mixture_->GetViscosity(dim_T_tr_n, dim_T_eev_n) / mu_ref_;
     const double k_tr_n =
-        mixture_->GetTransRotationConductivity(T_tr_n, T_eev_n);
+        mixture_->GetTransRotationConductivity(dim_T_tr_n, dim_T_eev_n) / k_ref_;
     const double k_eev_n =
-        mixture_->GetElectronicVibrationConductivity(T_tr_n, T_eev_n);
+        mixture_->GetElectronicVibrationConductivity(dim_T_tr_n, dim_T_eev_n) / k_ref_;
 
     const double* Y_n = mixture_->GetMassFraction();
     double mixture_dx_n = 0.0;
@@ -1977,8 +2433,9 @@ void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
       mixture_dy_n += dy_n[i];
     }
 
-    mixture_->GetDiffusivity(&Ds[0], T_tr_n, T_eev_n);
+    mixture_->GetDiffusivity(&Ds[0], dim_T_tr_n, dim_T_eev_n);
     for (int i = 0; i < ns_; i++) {
+      Ds[i] /= D_ref_;
       Isx[i] = -Ds[i] * (dx_n[i] - Y_n[i] * mixture_dx_n);
       Isy[i] = -Ds[i] * (dy_n[i] - Y_n[i] * mixture_dy_n);
     }
@@ -2009,17 +2466,19 @@ void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
       diffflux_n[eidx + ns_] = Mw_e * sum_y;
     }
 
-    const auto txx_n = c23_ * mu_n * (2.0 * ux_n - vy_n);
+    const auto tau_ax_n = (std::abs(y) < 1.0e-12) ? 0.0 : static_cast<double>(ax_) * v_n / y;
+    const auto txx_n = c23_ * mu_n * (2.0 * ux_n - vy_n - tau_ax_n);
     const auto txy_n = mu_n * (uy_n + vx_n);
-    const auto tyy_n = c23_ * mu_n * (2.0 * vy_n - ux_n);
+    const auto tyy_n = c23_ * mu_n * (2.0 * vy_n - ux_n - tau_ax_n);
 
     double Jh_x_n = 0.0;
     double Jh_y_n = 0.0;
     double Je_eev_x_n = 0.0;
     double Je_eev_y_n = 0.0;
     for (int i = 0; i < ns_; i++) {
-      const double h = species[i]->GetEnthalpy(T_tr_n, T_eev_n);
-      const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev_n);
+      const double h = species[i]->GetEnthalpy(dim_T_tr_n, dim_T_eev_n) / e_ref_;
+      const double e_eev =
+          species[i]->GetElectronicVibrationEnergy(dim_T_eev_n) / e_ref_;
       Jh_x_n += diffflux_n[i] * h;
       Je_eev_x_n += diffflux_n[i] * e_eev;
       Jh_y_n += diffflux_n[i + ns_] * h;
@@ -2041,68 +2500,52 @@ void EquationNS2DNeq2T::ComputeNumFluxLLF(const int num_points,
     ind = DS_ * ipoint;
     for (int i = 0; i < ns_; i++)
       flux[ind++] =
-          0.5 * (d_o[i] * u_o + d_n[i] * u_n - diffflux_o[i] - diffflux_n[i] -
-                 arvis_o * dx_o[i] - arvis_n * dx_n[i] - nx * diff[i]);
+      0.5 * (d_o[i] * u_o + d_n[i] * u_n - diffflux_o[i] - diffflux_n[i] -
+        arvis_o * dx_o[i] - arvis_n * dx_n[i] - nx * diff[i]);
     flux[ind++] =
-        0.5 * (du_o * u_o + mixture_p_o + du_n * u_n + mixture_p_n - txx_o -
-               txx_n - arvis_o * ux_o - arvis_n * ux_n - nx * diff0);
+      0.5 * (du_o * u_o + mixture_p_o + du_n * u_n + mixture_p_n - txx_o -
+        txx_n - arvis_o * dux_o - arvis_n * dux_n - nx * diff0);
     flux[ind++] = 0.5 * (du_o * v_o + du_n * v_n - txy_o - txy_n -
-                         arvis_o * vx_o - arvis_n * vx_n - nx * diff1);
+      arvis_o * dvx_o - arvis_n * dvx_n - nx * diff1);
     flux[ind++] =
-        0.5 * ((dE_o + mixture_p_o) * u_o + (dE_n + mixture_p_n) * u_n -
-               txx_o * u_o - txy_o * v_o - txx_n * u_n - txy_n * v_n -
-               q_tr_x_o - q_eev_x_o - Jh_x_o - q_tr_x_n - q_eev_x_n - Jh_x_n -
-               arvis_o * Ttrx_o - arvis_n * Ttrx_n - nx * diff2);
+      0.5 * ((dE_o + mixture_p_o) * u_o + (dE_n + mixture_p_n) * u_n -
+        txx_o * u_o - txy_o * v_o - txx_n * u_n - txy_n * v_n -
+        q_tr_x_o - q_eev_x_o - Jh_x_o - q_tr_x_n - q_eev_x_n - Jh_x_n -
+        arvis_o * dEx_o - arvis_n * dEx_n - nx * diff2);
     flux[ind++] = 0.5 * (de_eev_o * u_o + de_eev_n * u_n - q_eev_x_o -
-                         Je_eev_x_o - q_eev_x_n - Je_eev_x_n -
-                         arvis_o * Teevx_o - arvis_n * Teevx_n - nx * diff3);
+      Je_eev_x_o - q_eev_x_n - Je_eev_x_n -
+      arvis_o * de_eevx_o - arvis_n * de_eevx_n - nx * diff3);
     for (int i = 0; i < ns_; i++)
       flux[ind++] = 0.5 * (d_o[i] * v_o + d_n[i] * v_n - diffflux_o[i + ns_] -
-                           diffflux_n[i + ns_] - arvis_o * dy_o[i] -
-                           arvis_n * dy_n[i] - ny * diff[i]);
+        diffflux_n[i + ns_] - arvis_o * dy_o[i] -
+        arvis_n * dy_n[i] - ny * diff[i]);
     flux[ind++] = 0.5 * (dv_o * u_o + dv_n * u_n - txy_o - txy_n -
-                         arvis_o * uy_o - arvis_n * uy_n - ny * diff0);
+      arvis_o * duy_o - arvis_n * duy_n - ny * diff0);
     flux[ind++] =
-        0.5 * (dv_o * v_o + mixture_p_o + dv_n * v_n + mixture_p_n - tyy_o -
-               tyy_n - arvis_o * vy_o - arvis_n * vy_n - ny * diff1);
+      0.5 * (dv_o * v_o + mixture_p_o + dv_n * v_n + mixture_p_n - tyy_o -
+        tyy_n - arvis_o * dvy_o - arvis_n * dvy_n - ny * diff1);
     flux[ind++] =
-        0.5 * ((dE_o + mixture_p_o) * v_o + (dE_n + mixture_p_n) * v_n -
-               txy_o * u_o - tyy_o * v_o - txy_n * u_n - tyy_n * v_n -
-               q_tr_y_o - q_eev_y_o - Jh_y_o - q_tr_y_n - q_eev_y_n - Jh_y_n -
-               arvis_o * Ttry_o - arvis_n * Ttry_n - ny * diff2);
+      0.5 * ((dE_o + mixture_p_o) * v_o + (dE_n + mixture_p_n) * v_n -
+        txy_o * u_o - tyy_o * v_o - txy_n * u_n - tyy_n * v_n -
+        q_tr_y_o - q_eev_y_o - Jh_y_o - q_tr_y_n - q_eev_y_n - Jh_y_n -
+        arvis_o * dEy_o - arvis_n * dEy_n - ny * diff2);
     flux[ind] = 0.5 * (de_eev_o * v_o + de_eev_n * v_n - q_eev_y_o -
-                       Je_eev_y_o - q_eev_y_n - Je_eev_y_n - arvis_o * Teevy_o -
-                       arvis_n * Teevy_n - ny * diff3);
-                       
-    // for debug
-    //for (int i = 0; i < ns_; i++)
-    //  flux[ind++] =
-    //      0.5 * (d_o[i] * u_o + d_n[i] * u_n - nx * diff[i]);
-    //flux[ind++] =
-    //    0.5 * (du_o * u_o + mixture_p_o + du_n * u_n + mixture_p_n - nx * diff0);
-    //flux[ind++] = 0.5 * (du_o * v_o + du_n * v_n - nx * diff1);
-    //flux[ind++] =
-    //    0.5 * ((dE_o + mixture_p_o) * u_o + (dE_n + mixture_p_n) * u_n - nx * diff2);
-    //flux[ind++] = 0.5 * (de_eev_o * u_o + de_eev_n * u_n - nx * diff3);
-    //for (int i = 0; i < ns_; i++)
-    //  flux[ind++] = 0.5 * (d_o[i] * v_o + d_n[i] * v_n - ny * diff[i]);
-    //flux[ind++] = 0.5 * (dv_o * u_o + dv_n * u_n - ny * diff0);
-    //flux[ind++] =
-    //    0.5 * (dv_o * v_o + mixture_p_o + dv_n * v_n + mixture_p_n - ny * diff1);
-    //flux[ind++] =
-    //    0.5 * ((dE_o + mixture_p_o) * v_o + (dE_n + mixture_p_n) * v_n - ny * diff2);
-    //flux[ind] = 0.5 * (de_eev_o * v_o + de_eev_n * v_n - ny * diff3);
-    // end for debug
+      Je_eev_y_o - q_eev_y_n - Je_eev_y_n - arvis_o * de_eevy_o -
+      arvis_n * de_eevy_n - ny * diff3);
+
+    const double fy = static_cast<double>(ax_) * (y - 1.0) + 1.0;
+    cblas_dscal(DS_, fy, &flux[DS_ * ipoint], 1);
   }
 }
-void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
-                                                FACE_JACOBI_OUTPUTS,
-                                                FACE_INPUTS) {
+void EquationNS2DNeq2Tnondim::ComputeNumFluxJacobiLLF(const int num_points,
+                                                      FACE_JACOBI_OUTPUTS,
+                                                      FACE_INPUTS, const std::vector<double>& coords) {
   // flux_jacobi(ds1s2) = F(ds1) over U(s2)
   // flux_grad_jacobi(d1s1 s2d2) = F(d1s1) over gradU(d2s2)
   const auto& species = mixture_->GetSpecies();
   const auto& hidx = mixture_->GetHeavyParticleIdx();
   const auto& eidx = mixture_->GetElectronIndex();
+  const auto& face_points = DENEB_DATA->GetFacePoints();
 
   static std::vector<double> Ds(ns_, 0.0);
   static std::vector<double> Isx(ns_, 0.0);
@@ -2112,10 +2555,21 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
   static std::vector<aDual> flux1(DS_, aDual(S_));
   static std::vector<aDual> flux2(DS_, aDual(DS_));
 
+  std::vector<double> owner_sol_jacobi(num_points * SS_, 0.0);
+  std::vector<double> neighbor_sol_jacobi(num_points * SS_, 0.0);
+  std::vector<double> owner_div_sol(num_points * S_ * 2, 0.0);
+  std::vector<double> neighbor_div_sol(num_points * S_ * 2, 0.0);
+
   int ind = 0;
   double arvis_o = 0.0;
   double arvis_n = 0.0;
 
+  std::vector<double> dim_d_o(ns_);
+  std::vector<double> dim_d_n(ns_);
+  ComputeSolutionJacobi(num_points, owner_sol_jacobi, owner_u);
+  ComputeSolutionJacobi(num_points, neighbor_sol_jacobi, neighbor_u);
+  gradpri2gradsol(num_points, &owner_sol_jacobi[0], &owner_div_u[0], &owner_div_sol[0]);
+  gradpri2gradsol(num_points, &neighbor_sol_jacobi[0], &neighbor_div_u[0], &neighbor_div_sol[0]);
   // owner jacobi
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_NORMAL_PD(normal);
@@ -2123,23 +2577,27 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         owner_cell, ipoint);
     arvis_n = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(
         neighbor_cell, ipoint);
+    const double y = coords[ipoint * D_ + 1];
+    const double fy = static_cast<double>(ax_) * (y - 1.0) + 1.0;
     {
       GET_SOLUTION_PS(_n, neighbor_u);
       GET_SOLUTION_GRAD_PDS(_n, neighbor_div_u);
+      GET_CONS_SOLUTION_GRAD_PDS(_n, neighbor_div_sol);
 
       // Neighbor convective flux
-      mixture_->SetDensity(d_n);
-      const double mixture_d_n = mixture_->GetTotalDensity();
-      const double mixture_p_n = mixture_->GetPressure(T_tr_n, T_eev_n);
-      const double beta_n = mixture_->GetBeta(T_tr_n);
+      mixture_->SetDensity(&dim_d_n[0]);
+      const double mixture_d_n = mixture_->GetTotalDensity() / rho_ref_;
+      const double mixture_p_n = mixture_->GetPressure(dim_T_tr_n, dim_T_eev_n) / p_ref_;
+      const double beta_n = mixture_->GetBeta(dim_T_tr_n);
       const double a_n = std::sqrt((1.0 + beta_n) * mixture_p_n / mixture_d_n);
       const double V_n = u_n * nx + v_n * ny;
       double de_n = 0.0;
       double de_eev_n = 0.0;
       for (int i = 0; i < ns_; i++) {
-        const double e_n = species[i]->GetInternalEnergy(T_tr_n, T_eev_n);
+        const double e_n =
+            species[i]->GetInternalEnergy(dim_T_tr_n, dim_T_eev_n) / e_ref_;
         const double e_eev_n =
-            species[i]->GetElectronicVibrationEnergy(T_eev_n);
+            species[i]->GetElectronicVibrationEnergy(dim_T_eev_n) / e_ref_;
         de_n += d_n[i] * e_n;
         de_eev_n += d_n[i] * e_eev_n;
       }
@@ -2148,11 +2606,11 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
       const double dE_n = de_n + 0.5 * (du_n * u_n + dv_n * v_n);
 
       // Neighbor viscous flux
-      const double mu_n = mixture_->GetViscosity(T_tr_n, T_eev_n);
+      const double mu_n = mixture_->GetViscosity(dim_T_tr_n, dim_T_eev_n) / mu_ref_;
       const double k_tr_n =
-          mixture_->GetTransRotationConductivity(T_tr_n, T_eev_n);
+          mixture_->GetTransRotationConductivity(dim_T_tr_n, dim_T_eev_n) / k_ref_;
       const double k_eev_n =
-          mixture_->GetElectronicVibrationConductivity(T_tr_n, T_eev_n);
+          mixture_->GetElectronicVibrationConductivity(dim_T_tr_n, dim_T_eev_n) / k_ref_;
 
       const double* Y_n = mixture_->GetMassFraction();
       double mixture_dx_n = 0.0;
@@ -2162,8 +2620,9 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         mixture_dy_n += dy_n[i];
       }
 
-      mixture_->GetDiffusivity(&Ds[0], T_tr_n, T_eev_n);
+      mixture_->GetDiffusivity(&Ds[0], dim_T_tr_n, dim_T_eev_n);
       for (int i = 0; i < ns_; i++) {
+        Ds[i] /= D_ref_;
         Isx[i] = -Ds[i] * (dx_n[i] - Y_n[i] * mixture_dx_n);
         Isy[i] = -Ds[i] * (dy_n[i] - Y_n[i] * mixture_dy_n);
       }
@@ -2196,17 +2655,18 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         diffflux_n[eidx + ns_] = Mw_e * sum_y;
       }
 
-      const auto txx_n = c23_ * mu_n * (2.0 * ux_n - vy_n);
+      const auto tau_ax_n = (std::abs(y) < 1.0e-12) ? 0.0 : static_cast<double>(ax_) * v_n / y;
+      const auto txx_n = c23_ * mu_n * (2.0 * ux_n - vy_n - tau_ax_n);
       const auto txy_n = mu_n * (uy_n + vx_n);
-      const auto tyy_n = c23_ * mu_n * (2.0 * vy_n - ux_n);
+      const auto tyy_n = c23_ * mu_n * (2.0 * vy_n - ux_n - tau_ax_n);
 
       double Jh_x_n = 0.0;
       double Jh_y_n = 0.0;
       double Je_eev_x_n = 0.0;
       double Je_eev_y_n = 0.0;
       for (int i = 0; i < ns_; i++) {
-        const double h = species[i]->GetEnthalpy(T_tr_n, T_eev_n);
-        const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev_n);
+        const double h = species[i]->GetEnthalpy(dim_T_tr_n, dim_T_eev_n) / e_ref_;
+        const double e_eev = species[i]->GetElectronicVibrationEnergy(dim_T_eev_n) / e_ref_;
         Jh_x_n += diffflux_n[i] * h;
         Je_eev_x_n += diffflux_n[i] * e_eev;
         Jh_y_n += diffflux_n[i + ns_] * h;
@@ -2221,38 +2681,55 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         // ps
         ind = S_ * ipoint;
         std::vector<aDual> d_o(ns_, aDual(S_));
-        for (int i = 0; i < ns_; i++) d_o[i] = aDual(S_, owner_u[ind++], i);
+        for (int i = 0; i < ns_; i++) {
+          dim_d_o[i] = owner_u[ind] * rho_ref_;
+          d_o[i] = aDual(S_, owner_u[ind++], i);
+        }
         aDual u_o(S_, owner_u[ind++], ns_);
         aDual v_o(S_, owner_u[ind++], ns_ + 1);
         const double& T_tr_o = owner_u[ind++];
-        const double& T_eev_o = owner_u[ind++];
+        const double& T_eev_o = owner_u[ind];
+        const double dim_T_tr_o = T_tr_o * T_ref_;
+        const double dim_T_eev_o = T_eev_o * T_ref_;
 
         GET_SOLUTION_GRAD_PDS(_o, owner_div_u);
+        GET_CONS_SOLUTION_GRAD_PDS(_o, owner_div_sol);
 
         // Owner convective flux
-        mixture_->SetDensity(&owner_u[S_ * ipoint]);
-        aDual mixture_d_o(S_, mixture_->GetTotalDensity());
+        mixture_->SetDensity(&dim_d_o[0]);
+        aDual mixture_d_o(S_, mixture_->GetTotalDensity() / rho_ref_);
         for (int i = 0; i < ns_; i++) mixture_d_o.df[i] = 1.0;
 
         aDual mixture_p_o(S_);
-        mixture_p_o.f =
-            mixture_->GetPressureJacobian(T_tr_o, T_eev_o, &mixture_p_o.df[0]);
+        mixture_p_o.f = mixture_->GetPressureJacobian(dim_T_tr_o, dim_T_eev_o,
+                                                      &mixture_p_o.df[0]);
         std::swap(mixture_p_o.df[ns_], mixture_p_o.df[ns_ + 2]);
         std::swap(mixture_p_o.df[ns_ + 1], mixture_p_o.df[ns_ + 3]);
+        mixture_p_o.f /= p_ref_;
+        for (int i = 0; i < ns_; i++) mixture_p_o.df[i] *= rho_ref_ / p_ref_;
+        mixture_p_o.df[ns_ + 2] *= T_ref_ / p_ref_;
+        mixture_p_o.df[ns_ + 3] *= T_ref_ / p_ref_;
 
         aDual beta_o(S_);
-        beta_o.f = mixture_->GetBetaJacobian(T_tr_o, &beta_o.df[0]);
+        beta_o.f = mixture_->GetBetaJacobian(dim_T_tr_o, &beta_o.df[0]);
+        for (int i = 0; i < ns_; i++) beta_o.df[i] *= rho_ref_;
+        beta_o.df[ns_ + 2] *= T_ref_;
+        beta_o.df[ns_ + 3] *= T_ref_;
 
         const auto a_o = std::sqrt((1.0 + beta_o) * mixture_p_o / mixture_d_o);
         const auto V_o = u_o * nx + v_o * ny;
         aDual de_o(S_);
         aDual de_eev_o(S_);
         for (int i = 0; i < ns_; i++) {
-          const auto e = species[i]->GetInternalEnergy(T_tr_o, T_eev_o);
-          const auto e_eev = species[i]->GetElectronicVibrationEnergy(T_eev_o);
-          const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(T_tr_o);
+          const auto e = species[i]->GetInternalEnergy(dim_T_tr_o, dim_T_eev_o) / e_ref_;
+          const auto e_eev =
+              species[i]->GetElectronicVibrationEnergy(dim_T_eev_o) / e_ref_;
+          const auto Cv_tr =
+              species[i]->GetTransRotationSpecificHeat(dim_T_tr_o) * T_ref_ /
+              e_ref_;
           const auto Cv_eev =
-              species[i]->GetElectronicVibrationSpecificHeat(T_eev_o);
+              species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev_o) *
+              T_ref_ / e_ref_;
 
           de_o.f += d_o[i].f * e;
           de_o.df[i] = e;
@@ -2268,12 +2745,14 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         const auto dE_o = de_o + 0.5 * (du_o * u_o + dv_o * v_o);
 
         // Viscous flux
-        const auto mu_o = mixture_->GetViscosity(T_tr_o, T_eev_o);
+        const auto mu_o =
+            mixture_->GetViscosity(dim_T_tr_o, dim_T_eev_o) / mu_ref_;
         const auto k_tr_o =
-            mixture_->GetTransRotationConductivity(T_tr_o, T_eev_o);
-        const auto k_eev_o =
-            mixture_->GetElectronicVibrationConductivity(T_tr_o, T_eev_o);
-        mixture_->GetDiffusivity(&Ds[0], T_tr_o, T_eev_o);
+            mixture_->GetTransRotationConductivity(dim_T_tr_o, dim_T_eev_o) /
+            k_ref_;
+        const auto k_eev_o = mixture_->GetElectronicVibrationConductivity(
+                                 dim_T_tr_o, dim_T_eev_o) /
+                             k_ref_;
 
         std::vector<aDual> Y_o(ns_, aDual(S_));
         for (int i = 0; i < ns_; i++) Y_o[i] = d_o[i] / mixture_d_o;
@@ -2287,7 +2766,9 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
 
         std::vector<aDual> Isx_o(ns_, aDual(S_));
         std::vector<aDual> Isy_o(ns_, aDual(S_));
+        mixture_->GetDiffusivity(&Ds[0], dim_T_tr_o, dim_T_eev_o);
         for (int i = 0; i < ns_; i++) {
+          Ds[i] /= D_ref_;
           Isx_o[i] = -Ds[i] * (dx_o[i] - Y_o[i] * mixture_dx_o);
           Isy_o[i] = -Ds[i] * (dy_o[i] - Y_o[i] * mixture_dy_o);
         }
@@ -2299,7 +2780,7 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
           Iy_sum_o = Iy_sum_o + Isy_o[idx];
         }
 
-        std::vector<aDual> diffflux_o(2 * ns_, aDual(S_));  // check cost
+        std::vector<aDual> diffflux_o(2 * ns_, aDual(S_));
         for (const int& idx : hidx) {
           diffflux_o[idx] = -Isx_o[idx] + Y_o[idx] * Ix_sum_o;
           diffflux_o[idx + ns_] = -Isy_o[idx] + Y_o[idx] * Iy_sum_o;
@@ -2318,22 +2799,28 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
           diffflux_o[eidx + ns_] = Mw_e * sum_y;
         }
 
-        const aDual txx_o(S_, c23_ * mu_o * (2.0 * ux_o - vy_o));
-        const aDual txy_o(S_, mu_o * (uy_o + vx_o));
-        const aDual tyy_o(S_, c23_ * mu_o * (2.0 * vy_o - ux_o));
+        const auto tau_ax_o = (std::abs(y) < 1.0e-12) ? aDual(S_, 0.0) : static_cast<double>(ax_)* v_o / y;
+        const auto txx_o = c23_ * mu_o * (2.0 * ux_o - vy_o - tau_ax_o);
+        const auto txy_o = mu_o * (uy_o + vx_o);
+        const auto tyy_o = c23_ * mu_o * (2.0 * vy_o - ux_o - tau_ax_o);
 
         aDual Jh_x_o(S_);
         aDual Jh_y_o(S_);
         aDual Je_eev_x_o(S_);
         aDual Je_eev_y_o(S_);
         for (int i = 0; i < ns_; i++) {
-          const double h = species[i]->GetEnthalpy(T_tr_o, T_eev_o);
+          const double h =
+              species[i]->GetEnthalpy(dim_T_tr_o, dim_T_eev_o) / e_ref_;
           const double e_eev =
-              species[i]->GetElectronicVibrationEnergy(T_eev_o);
-          const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(T_tr_o);
+              species[i]->GetElectronicVibrationEnergy(dim_T_eev_o) / e_ref_;
+          const auto Cv_tr =
+              species[i]->GetTransRotationSpecificHeat(dim_T_tr_o) * T_ref_ /
+              e_ref_;
           const auto Cv_eev =
-              species[i]->GetElectronicVibrationSpecificHeat(T_eev_o);
-          const double R = species[i]->GetSpecificGasConstant();
+              species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev_o) *
+              T_ref_ / e_ref_;
+          const double R =
+              species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
 
           const auto Cp_tr = Cv_tr + (i == eidx) ? 0.0 : R;
           const auto Cp_eev = Cv_eev + (i == eidx) ? R : 0.0;
@@ -2367,46 +2854,48 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         ind = 0;
         for (int i = 0; i < ns_; i++)
           flux1[ind++] = 0.5 * (d_o[i] * u_o + d_n[i] * u_n - diffflux_o[i] -
-                                diffflux_n[i] - arvis_o * dx_o[i] -
-                                arvis_n * dx_n[i] - nx * diff[i]);
+            diffflux_n[i] - arvis_o * dx_o[i] -
+            arvis_n * dx_n[i] - nx * diff[i]);
         flux1[ind++] =
-            0.5 * (du_o * u_o + mixture_p_o + du_n * u_n + mixture_p_n - txx_o -
-                   txx_n - arvis_o * ux_o - arvis_n * ux_n - nx * diff0);
+          0.5 * (du_o * u_o + mixture_p_o + du_n * u_n + mixture_p_n - txx_o -
+            txx_n - arvis_o * dux_o - arvis_n * dux_n - nx * diff0);
         flux1[ind++] = 0.5 * (du_o * v_o + du_n * v_n - txy_o - txy_n -
-                              arvis_o * vx_o - arvis_n * vx_n - nx * diff1);
+          arvis_o * dvx_o - arvis_n * dvx_n - nx * diff1);
         flux1[ind++] =
-            0.5 * ((dE_o + mixture_p_o) * u_o + (dE_n + mixture_p_n) * u_n -
-                   txx_o * u_o - txy_o * v_o - txx_n * u_n - txy_n * v_n -
-                   q_tr_x_o - q_eev_x_o - Jh_x_o - q_tr_x_n - q_eev_x_n -
-                   Jh_x_n - arvis_o * Ttrx_o - arvis_n * Ttrx_n - nx * diff2);
+          0.5 * ((dE_o + mixture_p_o) * u_o + (dE_n + mixture_p_n) * u_n -
+            txx_o * u_o - txy_o * v_o - txx_n * u_n - txy_n * v_n -
+            q_tr_x_o - q_eev_x_o - Jh_x_o - q_tr_x_n - q_eev_x_n -
+            Jh_x_n - arvis_o * dEx_o - arvis_n * dEx_n - nx * diff2);
         flux1[ind++] =
-            0.5 * (de_eev_o * u_o + de_eev_n * u_n - q_eev_x_o - Je_eev_x_o -
-                   q_eev_x_n - Je_eev_x_n - arvis_o * Teevx_o -
-                   arvis_n * Teevx_n - nx * diff3);
+          0.5 * (de_eev_o * u_o + de_eev_n * u_n - q_eev_x_o - Je_eev_x_o -
+            q_eev_x_n - Je_eev_x_n - arvis_o * de_eevx_o -
+            arvis_n * de_eevx_n - nx * diff3);
         for (int i = 0; i < ns_; i++)
           flux1[ind++] =
-              0.5 * (d_o[i] * v_o + d_n[i] * v_n - diffflux_o[i + ns_] -
-                     diffflux_n[i + ns_] - arvis_o * dy_o[i] -
-                     arvis_n * dy_n[i] - ny * diff[i]);
+          0.5 * (d_o[i] * v_o + d_n[i] * v_n - diffflux_o[i + ns_] -
+            diffflux_n[i + ns_] - arvis_o * dy_o[i] -
+            arvis_n * dy_n[i] - ny * diff[i]);
         flux1[ind++] = 0.5 * (dv_o * u_o + dv_n * u_n - txy_o - txy_n -
-                              arvis_o * uy_o - arvis_n * uy_n - ny * diff0);
+          arvis_o * duy_o - arvis_n * duy_n - ny * diff0);
         flux1[ind++] =
-            0.5 * (dv_o * v_o + mixture_p_o + dv_n * v_n + mixture_p_n - tyy_o -
-                   tyy_n - arvis_o * vy_o - arvis_n * vy_n - ny * diff1);
+          0.5 * (dv_o * v_o + mixture_p_o + dv_n * v_n + mixture_p_n - tyy_o -
+            tyy_n - arvis_o * dvy_o - arvis_n * dvy_n - ny * diff1);
         flux1[ind++] =
-            0.5 * ((dE_o + mixture_p_o) * v_o + (dE_n + mixture_p_n) * v_n -
-                   txy_o * u_o - tyy_o * v_o - txy_n * u_n - tyy_n * v_n -
-                   q_tr_y_o - q_eev_y_o - Jh_y_o - q_tr_y_n - q_eev_y_n -
-                   Jh_y_n - arvis_o * Ttry_o - arvis_n * Ttry_n - ny * diff2);
+          0.5 * ((dE_o + mixture_p_o) * v_o + (dE_n + mixture_p_n) * v_n -
+            txy_o * u_o - tyy_o * v_o - txy_n * u_n - tyy_n * v_n -
+            q_tr_y_o - q_eev_y_o - Jh_y_o - q_tr_y_n - q_eev_y_n -
+            Jh_y_n - arvis_o * dEy_o - arvis_n * dEy_n - ny * diff2);
         flux1[ind] = 0.5 * (de_eev_o * v_o + de_eev_n * v_n - q_eev_y_o -
-                            Je_eev_y_o - q_eev_y_n - Je_eev_y_n -
-                            arvis_o * Teevy_o - arvis_n * Teevy_n - ny * diff3);
+          Je_eev_y_o - q_eev_y_n - Je_eev_y_n -
+          arvis_o * de_eevy_o - arvis_n * de_eevy_n - ny * diff3);
 
         // pdss
         ind = DSS_ * ipoint;
         for (int ds = 0; ds < DS_; ds++)
           for (int istate = 0; istate < S_; istate++)
             flux_owner_jacobi[ind++] = flux1[ds].df[istate];
+
+        cblas_dscal(DSS_, fy, &flux_owner_jacobi[DSS_ * ipoint], 1);
       }
       {
         // flux owner grad jacobi
@@ -2430,13 +2919,12 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         const aDual Teevy_o(DS_, owner_div_u[ind], 2 * (ns_ + 3) + 1);
 
         // Owner viscous flux
-        mixture_->SetDensity(&owner_u[S_ * ipoint]);
-        const auto mu_o = mixture_->GetViscosity(T_tr_o, T_eev_o);
+        mixture_->SetDensity(&dim_d_o[0]);
+        const auto mu_o = mixture_->GetViscosity(dim_T_tr_o, dim_T_eev_o) / mu_ref_;
         const auto k_tr_o =
-            mixture_->GetTransRotationConductivity(T_tr_o, T_eev_o);
-        const auto k_eev_o =
-            mixture_->GetElectronicVibrationConductivity(T_tr_o, T_eev_o);
-        mixture_->GetDiffusivity(&Ds[0], T_tr_o, T_eev_o);
+            mixture_->GetTransRotationConductivity(dim_T_tr_o, dim_T_eev_o) / k_ref_;
+        const auto k_eev_o = mixture_->GetElectronicVibrationConductivity(
+            dim_T_tr_o, dim_T_eev_o) / k_ref_;
 
         const double* Y_o = mixture_->GetMassFraction();
         aDual mixture_dx_o(DS_);
@@ -2448,7 +2936,9 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
 
         std::vector<aDual> Isx_o(ns_, aDual(DS_));
         std::vector<aDual> Isy_o(ns_, aDual(DS_));
+        mixture_->GetDiffusivity(&Ds[0], dim_T_tr_o, dim_T_eev_o);
         for (int i = 0; i < ns_; i++) {
+          Ds[i] /= D_ref_;
           Isx_o[i] = -Ds[i] * (dx_o[i] - Y_o[i] * mixture_dx_o);
           Isy_o[i] = -Ds[i] * (dy_o[i] - Y_o[i] * mixture_dy_o);
         }
@@ -2460,7 +2950,7 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
           Iy_sum_o = Iy_sum_o + Isy_o[idx];
         }
 
-        std::vector<aDual> diffflux_o(2 * ns_, aDual(DS_));  // check cost
+        std::vector<aDual> diffflux_o(2 * ns_, aDual(DS_));
 
         for (const int& idx : hidx) {
           diffflux_o[idx] = -Isx_o[idx] + Y_o[idx] * Ix_sum_o;
@@ -2480,9 +2970,10 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
           diffflux_o[eidx + ns_] = Mw_e * sum_y;
         }
 
-        const auto txx_o = c23_ * mu_o * (2.0 * ux_o - vy_o);
+        const auto tau_ax_o = (std::abs(y) < 1.0e-12) ? aDual(DS_, 0.0) : aDual(DS_, static_cast<double>(ax_) * v_o / y);
+        const auto txx_o = c23_ * mu_o * (2.0 * ux_o - vy_o - tau_ax_o);
         const auto txy_o = mu_o * (uy_o + vx_o);
-        const auto tyy_o = c23_ * mu_o * (2.0 * vy_o - ux_o);
+        const auto tyy_o = c23_ * mu_o * (2.0 * vy_o - ux_o - tau_ax_o);
 
         aDual Jh_x_o(DS_);
         aDual Jh_y_o(DS_);
@@ -2490,9 +2981,9 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         aDual Je_eev_y_o(DS_);
 
         for (int i = 0; i < ns_; i++) {
-          const double h = species[i]->GetEnthalpy(T_tr_o, T_eev_o);
+          const double h = species[i]->GetEnthalpy(dim_T_tr_o, dim_T_eev_o) / e_ref_;
           const double e_eev =
-              species[i]->GetElectronicVibrationEnergy(T_eev_o);
+              species[i]->GetElectronicVibrationEnergy(dim_T_eev_o) / e_ref_;
 
           Jh_x_o = Jh_x_o + diffflux_o[i] * h;
           Jh_y_o = Jh_y_o + diffflux_o[i + ns_] * h;
@@ -2505,55 +2996,62 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         const auto q_eev_x_o = k_eev_o * Teevx_o;
         const auto q_eev_y_o = k_eev_o * Teevy_o;
 
-        ind = 0;        
+        ind = 0;
         for (int i = 0; i < ns_; i++)
-          flux2[ind++] = -0.5 * (diffflux_o[i] + diffflux_n[i] +
-                                 arvis_o * dx_o[i] + arvis_n * dx_n[i]);
-        flux2[ind++] = -0.5 * (txx_o + txx_n + arvis_o * ux_o + arvis_n * ux_n);
-        flux2[ind++] = -0.5 * (txy_o + txy_n + arvis_o * vx_o + arvis_n * vx_n);
-        flux2[ind++] =
-            -0.5 * (txx_o * u_o + txy_o * v_o + txx_n * u_n + txy_n * v_n +
-                    q_tr_x_o + q_eev_x_o + Jh_x_o + q_tr_x_n + q_eev_x_n +
-                    Jh_x_n + arvis_o * Ttrx_o + arvis_n * Ttrx_n);
-        flux2[ind++] = -0.5 * (q_eev_x_o + Je_eev_x_o + q_eev_x_n + Je_eev_x_n +
-                               arvis_o * Teevx_o + arvis_n * Teevx_n);
+          flux2[ind++] = -0.5 * (diffflux_o[i] + diffflux_n[i]);
+        flux2[ind++] = -0.5 * (txx_o + txx_n);
+        flux2[ind++] = -0.5 * (txy_o + txy_n);
+        flux2[ind++] = -0.5 * (txx_o * u_o + txy_o * v_o + txx_n * u_n +
+          txy_n * v_n + q_tr_x_o + q_eev_x_o + Jh_x_o +
+          q_tr_x_n + q_eev_x_n + Jh_x_n);
+        flux2[ind++] = -0.5 * (q_eev_x_o + Je_eev_x_o + q_eev_x_n + Je_eev_x_n);
         for (int i = 0; i < ns_; i++)
-          flux2[ind++] = -0.5 * (diffflux_o[i + ns_] + diffflux_n[i + ns_] +
-                                 arvis_o * dy_o[i] + arvis_n * dy_n[i]);
-        flux2[ind++] = -0.5 * (txy_o + txy_n + arvis_o * uy_o + arvis_n * uy_n);
-        flux2[ind++] = -0.5 * (tyy_o + tyy_n + arvis_o * vy_o + arvis_n * vy_n);
-        flux2[ind++] =
-            -0.5 * (txy_o * u_o + tyy_o * v_o + txy_n * u_n + tyy_n * v_n +
-                    q_tr_y_o + q_eev_y_o + Jh_y_o + q_tr_y_n + q_eev_y_n +
-                    Jh_y_n + arvis_o * Ttry_o + arvis_n * Ttry_n);
-        flux2[ind] = -0.5 * (q_eev_y_o + Je_eev_y_o + q_eev_y_n + Je_eev_y_n +
-                             arvis_o * Teevy_o + arvis_n * Teevy_n);                            
+          flux2[ind++] = -0.5 * (diffflux_o[i + ns_] + diffflux_n[i + ns_]);
+        flux2[ind++] = -0.5 * (txy_o + txy_n);
+        flux2[ind++] = -0.5 * (tyy_o + tyy_n);
+        flux2[ind++] = -0.5 * (txy_o * u_o + tyy_o * v_o + txy_n * u_n +
+          tyy_n * v_n + q_tr_y_o + q_eev_y_o + Jh_y_o +
+          q_tr_y_n + q_eev_y_n + Jh_y_n);
+        flux2[ind] = -0.5 * (q_eev_y_o + Je_eev_y_o + q_eev_y_n + Je_eev_y_n);
 
         // pdssd
         ind = DDSS_ * ipoint;
         for (int ds = 0; ds < DS_; ds++)
           for (int sd = 0; sd < DS_; sd++)
             flux_owner_grad_jacobi[ind++] = flux2[ds].df[sd];
+
+        for (int istate = 0; istate < S_; istate++)
+          for (int jstate = 0; jstate < S_; jstate++)
+            for (int idim = 0; idim < D_; idim++) {
+              const int irow = idim * S_ + istate;
+              const int icolumn = jstate * D_ + idim;
+              flux_owner_grad_jacobi[DDSS_ * ipoint + irow * DS_ + icolumn] -=
+                0.5 * arvis_o * owner_sol_jacobi[ipoint * SS_ + istate * S_ + jstate];
+            }
+
+        cblas_dscal(DDSS_, fy, &flux_owner_grad_jacobi[DDSS_ * ipoint], 1);
       }
     }
     {
       // flux neighbor jacobi & flux neighbor grad jacobi
       GET_SOLUTION_PS(_o, owner_u);
       GET_SOLUTION_GRAD_PDS(_o, owner_div_u);
+      GET_CONS_SOLUTION_GRAD_PDS(_o, owner_div_sol);
 
       // Owner convective flux
-      mixture_->SetDensity(d_o);
-      const double mixture_d_o = mixture_->GetTotalDensity();
-      const double mixture_p_o = mixture_->GetPressure(T_tr_o, T_eev_o);
-      const double beta_o = mixture_->GetBeta(T_tr_o);
+      mixture_->SetDensity(&dim_d_o[0]);
+      const double mixture_d_o = mixture_->GetTotalDensity() / rho_ref_;
+      const double mixture_p_o = mixture_->GetPressure(dim_T_tr_o, dim_T_eev_o) / p_ref_;
+      const double beta_o = mixture_->GetBeta(dim_T_tr_o);
       const double a_o = std::sqrt((1.0 + beta_o) * mixture_p_o / mixture_d_o);
       const double V_o = u_o * nx + v_o * ny;
       double de_o = 0.0;
       double de_eev_o = 0.0;
       for (int i = 0; i < ns_; i++) {
-        const double e_o = species[i]->GetInternalEnergy(T_tr_o, T_eev_o);
+        const double e_o =
+            species[i]->GetInternalEnergy(dim_T_tr_o, dim_T_eev_o) / e_ref_;
         const double e_eev_o =
-            species[i]->GetElectronicVibrationEnergy(T_eev_o);
+            species[i]->GetElectronicVibrationEnergy(dim_T_eev_o) / e_ref_;
         de_o += d_o[i] * e_o;
         de_eev_o += d_o[i] * e_eev_o;
       }
@@ -2562,11 +3060,11 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
       const double dE_o = de_o + 0.5 * (du_o * u_o + dv_o * v_o);
 
       // Owner viscous flux
-      const double mu_o = mixture_->GetViscosity(T_tr_o, T_eev_o);
+      const double mu_o = mixture_->GetViscosity(dim_T_tr_o, dim_T_eev_o) / mu_ref_;
       const double k_tr_o =
-          mixture_->GetTransRotationConductivity(T_tr_o, T_eev_o);
+          mixture_->GetTransRotationConductivity(dim_T_tr_o, dim_T_eev_o) / k_ref_;
       const double k_eev_o =
-          mixture_->GetElectronicVibrationConductivity(T_tr_o, T_eev_o);
+          mixture_->GetElectronicVibrationConductivity(dim_T_tr_o, dim_T_eev_o) / k_ref_;
 
       const double* Y_o = mixture_->GetMassFraction();
       double mixture_dx_o = 0.0;
@@ -2576,8 +3074,9 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         mixture_dy_o += dy_o[i];
       }
 
-      mixture_->GetDiffusivity(&Ds[0], T_tr_o, T_eev_o);
+      mixture_->GetDiffusivity(&Ds[0], dim_T_tr_o, dim_T_eev_o);
       for (int i = 0; i < ns_; i++) {
+        Ds[i] /= D_ref_;
         Isx[i] = -Ds[i] * (dx_o[i] - Y_o[i] * mixture_dx_o);
         Isy[i] = -Ds[i] * (dy_o[i] - Y_o[i] * mixture_dy_o);
       }
@@ -2610,17 +3109,19 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         diffflux_o[eidx + ns_] = Mw_e * sum_y;
       }
 
-      const auto txx_o = c23_ * mu_o * (2.0 * ux_o - vy_o);
+      const auto tau_ax_o = (std::abs(y) < 1.0e-12) ? 0.0 : static_cast<double>(ax_) * v_o / y;
+      const auto txx_o = c23_ * mu_o * (2.0 * ux_o - vy_o - tau_ax_o);
       const auto txy_o = mu_o * (uy_o + vx_o);
-      const auto tyy_o = c23_ * mu_o * (2.0 * vy_o - ux_o);
+      const auto tyy_o = c23_ * mu_o * (2.0 * vy_o - ux_o - tau_ax_o);
 
       double Jh_x_o = 0.0;
       double Jh_y_o = 0.0;
       double Je_eev_x_o = 0.0;
       double Je_eev_y_o = 0.0;
       for (int i = 0; i < ns_; i++) {
-        const double h = species[i]->GetEnthalpy(T_tr_o, T_eev_o);
-        const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev_o);
+        const double h = species[i]->GetEnthalpy(dim_T_tr_o, dim_T_eev_o) / e_ref_;
+        const double e_eev =
+            species[i]->GetElectronicVibrationEnergy(dim_T_eev_o) / e_ref_;
         Jh_x_o += diffflux_o[i] * h;
         Je_eev_x_o += diffflux_o[i] * e_eev;
         Jh_y_o += diffflux_o[i + ns_] * h;
@@ -2634,39 +3135,56 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         // flux neighbor jacobi
         // ps
         ind = S_ * ipoint;
-        std::vector<aDual> d_n(ns_, aDual(S_));
-        for (int i = 0; i < ns_; i++) d_n[i] = aDual(S_, neighbor_u[ind++], i);
+        std::vector<aDual> d_n(ns_, aDual(S_));        
+        for (int i = 0; i < ns_; i++) {
+          dim_d_n[i] = neighbor_u[ind] * rho_ref_;
+          d_n[i] = aDual(S_, neighbor_u[ind++], i);
+        }
         aDual u_n(S_, neighbor_u[ind++], ns_);
         aDual v_n(S_, neighbor_u[ind++], ns_ + 1);
         const double& T_tr_n = neighbor_u[ind++];
         const double& T_eev_n = neighbor_u[ind];
+        const double dim_T_tr_n = T_tr_n * T_ref_;
+        const double dim_T_eev_n = T_eev_n * T_ref_;
 
         GET_SOLUTION_GRAD_PDS(_n, neighbor_div_u);
+        GET_CONS_SOLUTION_GRAD_PDS(_n, neighbor_div_sol);
 
-        // Neighbor convective flux
-        mixture_->SetDensity(&neighbor_u[S_ * ipoint]);
-        aDual mixture_d_n(S_, mixture_->GetTotalDensity());
+        // Owner convective flux
+        mixture_->SetDensity(&dim_d_n[0]);
+        aDual mixture_d_n(S_, mixture_->GetTotalDensity() / rho_ref_);
         for (int i = 0; i < ns_; i++) mixture_d_n.df[i] = 1.0;
 
         aDual mixture_p_n(S_);
         mixture_p_n.f =
-            mixture_->GetPressureJacobian(T_tr_n, T_eev_n, &mixture_p_n.df[0]);
+            mixture_->GetPressureJacobian(dim_T_tr_n, dim_T_eev_n, &mixture_p_n.df[0]);
         std::swap(mixture_p_n.df[ns_], mixture_p_n.df[ns_ + 2]);
         std::swap(mixture_p_n.df[ns_ + 1], mixture_p_n.df[ns_ + 3]);
+        mixture_p_n.f /= p_ref_;
+        for (int i = 0; i < ns_; i++) mixture_p_n.df[i] *= rho_ref_ / p_ref_;
+        mixture_p_n.df[ns_ + 2] *= T_ref_ / p_ref_;
+        mixture_p_n.df[ns_ + 3] *= T_ref_ / p_ref_;
 
         aDual beta_n(S_);
-        beta_n.f = mixture_->GetBetaJacobian(T_tr_n, &beta_n.df[0]);
+        beta_n.f = mixture_->GetBetaJacobian(dim_T_tr_n, &beta_n.df[0]);
+        for (int i = 0; i < ns_; i++) beta_n.df[i] *= rho_ref_;
+        beta_n.df[ns_ + 2] *= T_ref_;
+        beta_n.df[ns_ + 3] *= T_ref_;
 
         const auto a_n = std::sqrt((1.0 + beta_n) * mixture_p_n / mixture_d_n);
         const auto V_n = u_n * nx + v_n * ny;
         aDual de_n(S_);
         aDual de_eev_n(S_);
         for (int i = 0; i < ns_; i++) {
-          const auto e = species[i]->GetInternalEnergy(T_tr_n, T_eev_n);
-          const auto e_eev = species[i]->GetElectronicVibrationEnergy(T_eev_n);
-          const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(T_tr_n);
+          const auto e = species[i]->GetInternalEnergy(dim_T_tr_n, dim_T_eev_n) / e_ref_;
+          const auto e_eev =
+              species[i]->GetElectronicVibrationEnergy(dim_T_eev_n) / e_ref_;
+          const auto Cv_tr =
+              species[i]->GetTransRotationSpecificHeat(dim_T_tr_n) * T_ref_ /
+              e_ref_;
           const auto Cv_eev =
-              species[i]->GetElectronicVibrationSpecificHeat(T_eev_n);
+              species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev_n) *
+              T_ref_ / e_ref_;
 
           de_n.f += d_n[i].f * e;
           de_n.df[i] = e;
@@ -2682,12 +3200,11 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         const auto dE_n = de_n + 0.5 * (du_n * u_n + dv_n * v_n);
 
         // Viscous flux
-        const auto mu_n = mixture_->GetViscosity(T_tr_n, T_eev_n);
+        const auto mu_n = mixture_->GetViscosity(dim_T_tr_n, dim_T_eev_n) / mu_ref_;
         const auto k_tr_n =
-            mixture_->GetTransRotationConductivity(T_tr_n, T_eev_n);
-        const auto k_eev_n =
-            mixture_->GetElectronicVibrationConductivity(T_tr_n, T_eev_n);
-        mixture_->GetDiffusivity(&Ds[0], T_tr_n, T_eev_n);
+            mixture_->GetTransRotationConductivity(dim_T_tr_n, dim_T_eev_n) / k_ref_;
+        const auto k_eev_n = mixture_->GetElectronicVibrationConductivity(
+            dim_T_tr_n, dim_T_eev_n) / k_ref_;
 
         std::vector<aDual> Y_n(ns_, aDual(S_));
         for (int i = 0; i < ns_; i++) Y_n[i] = d_n[i] / mixture_d_n;
@@ -2701,7 +3218,9 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
 
         std::vector<aDual> Isx_n(ns_, aDual(S_));
         std::vector<aDual> Isy_n(ns_, aDual(S_));
+        mixture_->GetDiffusivity(&Ds[0], dim_T_tr_n, dim_T_eev_n);
         for (int i = 0; i < ns_; i++) {
+          Ds[i] /= D_ref_;
           Isx_n[i] = -Ds[i] * (dx_n[i] - Y_n[i] * mixture_dx_n);
           Isy_n[i] = -Ds[i] * (dy_n[i] - Y_n[i] * mixture_dy_n);
         }
@@ -2713,7 +3232,7 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
           Iy_sum_n = Iy_sum_n + Isy_n[idx];
         }
 
-        std::vector<aDual> diffflux_n(2 * ns_, aDual(S_));  // check cost
+        std::vector<aDual> diffflux_n(2 * ns_, aDual(S_));
         for (const int& idx : hidx) {
           diffflux_n[idx] = -Isx_n[idx] + Y_n[idx] * Ix_sum_n;
           diffflux_n[idx + ns_] = -Isy_n[idx] + Y_n[idx] * Iy_sum_n;
@@ -2732,6 +3251,7 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
           diffflux_n[eidx + ns_] = Mw_e * sum_y;
         }
 
+        const auto tau_ax_n = (std::abs(y) < 1.0e-12) ? aDual(S_, 0.0) : static_cast<double>(ax_) * v_n / y;
         const auto txx_n = c23_ * mu_n * (2.0 * ux_n - vy_n);
         const auto txy_n = mu_n * (uy_n + vx_n);
         const auto tyy_n = c23_ * mu_n * (2.0 * vy_n - ux_n);
@@ -2741,13 +3261,18 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         aDual Je_eev_x_n(S_);
         aDual Je_eev_y_n(S_);
         for (int i = 0; i < ns_; i++) {
-          const double h = species[i]->GetEnthalpy(T_tr_n, T_eev_n);
+          const double h =
+              species[i]->GetEnthalpy(dim_T_tr_n, dim_T_eev_n) / e_ref_;
           const double e_eev =
-              species[i]->GetElectronicVibrationEnergy(T_eev_n);
-          const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(T_tr_n);
+              species[i]->GetElectronicVibrationEnergy(dim_T_eev_n) / e_ref_;
+          const auto Cv_tr =
+              species[i]->GetTransRotationSpecificHeat(dim_T_tr_n) * T_ref_ /
+              e_ref_;
           const auto Cv_eev =
-              species[i]->GetElectronicVibrationSpecificHeat(T_eev_n);
-          const double R = species[i]->GetSpecificGasConstant();
+              species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev_n) *
+              T_ref_ / e_ref_;
+          const double R =
+              species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
 
           const auto Cp_tr = Cv_tr + (i == eidx) ? 0.0 : R;
           const auto Cp_eev = Cv_eev + (i == eidx) ? R : 0.0;
@@ -2781,65 +3306,49 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         ind = 0;
         for (int i = 0; i < ns_; i++)
           flux1[ind++] = 0.5 * (d_o[i] * u_o + d_n[i] * u_n - diffflux_o[i] -
-                                diffflux_n[i] - arvis_o * dx_o[i] -
-                                arvis_n * dx_n[i] - nx * diff[i]);
-        flux1[ind++] =
-            0.5 * (du_o * u_o + mixture_p_o + du_n * u_n + mixture_p_n - txx_o -
-                   txx_n - arvis_o * ux_o - arvis_n * ux_n - nx * diff0);
+            diffflux_n[i] - arvis_o * dx_o[i] -
+            arvis_n * dx_n[i] - nx * diff[i]);
+        flux1[ind++] = 0.5 * (du_o * u_o + mixture_p_o + du_n * u_n +
+          mixture_p_n - txx_o - txx_n - arvis_o * dux_o -
+          arvis_n * dux_n - nx * diff0);
         flux1[ind++] = 0.5 * (du_o * v_o + du_n * v_n - txy_o - txy_n -
-                              arvis_o * vx_o - arvis_n * vx_n - nx * diff1);
+          arvis_o * dvx_o - arvis_n * dvx_n - nx * diff1);
         flux1[ind++] =
-            0.5 * ((dE_o + mixture_p_o) * u_o + (dE_n + mixture_p_n) * u_n -
-                   txx_o * u_o - txy_o * v_o - txx_n * u_n - txy_n * v_n -
-                   q_tr_x_o - q_eev_x_o - Jh_x_o - q_tr_x_n - q_eev_x_n -
-                   Jh_x_n - arvis_o * Ttrx_o - arvis_n * Ttrx_n - nx * diff2);
+          0.5 * ((dE_o + mixture_p_o) * u_o + (dE_n + mixture_p_n) * u_n -
+            txx_o * u_o - txy_o * v_o - txx_n * u_n - txy_n * v_n -
+            q_tr_x_o - q_eev_x_o - Jh_x_o - q_tr_x_n - q_eev_x_n -
+            Jh_x_n - arvis_o * dEx_o - arvis_n * dEx_n - nx * diff2);
         flux1[ind++] =
-            0.5 * (de_eev_o * u_o + de_eev_n * u_n - q_eev_x_o - Je_eev_x_o -
-                   q_eev_x_n - Je_eev_x_n - arvis_o * Teevx_o -
-                   arvis_n * Teevx_n - nx * diff3);
+          0.5 * (de_eev_o * u_o + de_eev_n * u_n - q_eev_x_o - Je_eev_x_o -
+            q_eev_x_n - Je_eev_x_n - arvis_o * de_eevx_o -
+            arvis_n * de_eevx_n - nx * diff3);
         for (int i = 0; i < ns_; i++)
           flux1[ind++] =
-              0.5 * (d_o[i] * v_o + d_n[i] * v_n - diffflux_o[i + ns_] -
-                     diffflux_n[i + ns_] - arvis_o * dy_o[i] -
-                     arvis_n * dy_n[i] - ny * diff[i]);
+          0.5 * (d_o[i] * v_o + d_n[i] * v_n - diffflux_o[i + ns_] -
+            diffflux_n[i + ns_] - arvis_o * dy_o[i] -
+            arvis_n * dy_n[i] - ny * diff[i]);
         flux1[ind++] = 0.5 * (dv_o * u_o + dv_n * u_n - txy_o - txy_n -
-                              arvis_o * uy_o - arvis_n * uy_n - ny * diff0);
+          arvis_o * duy_o - arvis_n * duy_n - ny * diff0);
+        flux1[ind++] = 0.5 * (dv_o * v_o + mixture_p_o + dv_n * v_n +
+          mixture_p_n - tyy_o - tyy_n - arvis_o * dvy_o -
+          arvis_n * dvy_n - ny * diff1);
         flux1[ind++] =
-            0.5 * (dv_o * v_o + mixture_p_o + dv_n * v_n + mixture_p_n - tyy_o -
-                   tyy_n - arvis_o * vy_o - arvis_n * vy_n - ny * diff1);
-        flux1[ind++] =
-            0.5 * ((dE_o + mixture_p_o) * v_o + (dE_n + mixture_p_n) * v_n -
-                   txy_o * u_o - tyy_o * v_o - txy_n * u_n - tyy_n * v_n -
-                   q_tr_y_o - q_eev_y_o - Jh_y_o - q_tr_y_n - q_eev_y_n -
-                   Jh_y_n - arvis_o * Ttry_o - arvis_n * Ttry_n - ny * diff2);
-        flux1[ind] = 0.5 * (de_eev_o * v_o + de_eev_n * v_n - q_eev_y_o -
-                            Je_eev_y_o - q_eev_y_n - Je_eev_y_n -
-                            arvis_o * Teevy_o - arvis_n * Teevy_n - ny * diff3);
+          0.5 * ((dE_o + mixture_p_o) * v_o + (dE_n + mixture_p_n) * v_n -
+            txy_o * u_o - tyy_o * v_o - txy_n * u_n - tyy_n * v_n -
+            q_tr_y_o - q_eev_y_o - Jh_y_o - q_tr_y_n - q_eev_y_n -
+            Jh_y_n - arvis_o * dEy_o - arvis_n * dEy_n - ny * diff2);
+        flux1[ind] =
+          0.5 * (de_eev_o * v_o + de_eev_n * v_n - q_eev_y_o - Je_eev_y_o -
+            q_eev_y_n - Je_eev_y_n - arvis_o * de_eevy_o -
+            arvis_n * de_eevy_n - ny * diff3);
 
-        // for debug
-        //for (int i = 0; i < ns_; i++)
-        //  flux1[ind++] = 0.5 * (d_o[i] * u_o + d_n[i] * u_n - nx * diff[i]);
-        //flux1[ind++] = 0.5 * (du_o * u_o + mixture_p_o + du_n * u_n +
-        //                      mixture_p_n - nx * diff0);
-        //flux1[ind++] = 0.5 * (du_o * v_o + du_n * v_n - nx * diff1);
-        //flux1[ind++] = 0.5 * ((dE_o + mixture_p_o) * u_o +
-        //                      (dE_n + mixture_p_n) * u_n - nx * diff2);
-        //flux1[ind++] = 0.5 * (de_eev_o * u_o + de_eev_n * u_n - nx * diff3);
-        //for (int i = 0; i < ns_; i++)
-        //  flux1[ind++] = 0.5 * (d_o[i] * v_o + d_n[i] * v_n - ny * diff[i]);
-        //flux1[ind++] = 0.5 * (dv_o * u_o + dv_n * u_n - ny * diff0);
-        //flux1[ind++] = 0.5 * (dv_o * v_o + mixture_p_o + dv_n * v_n +
-        //                      mixture_p_n - ny * diff1);
-        //flux1[ind++] = 0.5 * ((dE_o + mixture_p_o) * v_o +
-        //                      (dE_n + mixture_p_n) * v_n - ny * diff2);
-        //flux1[ind] = 0.5 * (de_eev_o * v_o + de_eev_n * v_n - ny * diff3);
-        // end for debug
-        
         // pdss
         ind = DSS_ * ipoint;
         for (int ds = 0; ds < DS_; ds++)
           for (int istate = 0; istate < S_; istate++)
             flux_neighbor_jacobi[ind++] = flux1[ds].df[istate];
+
+        cblas_dscal(DSS_, fy, &flux_neighbor_jacobi[DSS_ * ipoint], 1);
       }
       {
         // flux neighbor grad jacobi
@@ -2862,14 +3371,13 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         const aDual Ttry_n(DS_, neighbor_div_u[ind++], 2 * (ns_ + 2) + 1);
         const aDual Teevy_n(DS_, neighbor_div_u[ind], 2 * (ns_ + 3) + 1);
 
-        // Neighbor viscous flux
-        mixture_->SetDensity(&neighbor_u[S_ * ipoint]);
-        const auto mu_n = mixture_->GetViscosity(T_tr_n, T_eev_n);
+        // Owner viscous flux
+        mixture_->SetDensity(&dim_d_n[0]);
+        const auto mu_n = mixture_->GetViscosity(dim_T_tr_n, dim_T_eev_n) / mu_ref_;
         const auto k_tr_n =
-            mixture_->GetTransRotationConductivity(T_tr_n, T_eev_n);
-        const auto k_eev_n =
-            mixture_->GetElectronicVibrationConductivity(T_tr_n, T_eev_n);
-        mixture_->GetDiffusivity(&Ds[0], T_tr_n, T_eev_n);
+            mixture_->GetTransRotationConductivity(dim_T_tr_n, dim_T_eev_n) / k_ref_;
+        const auto k_eev_n = mixture_->GetElectronicVibrationConductivity(
+            dim_T_tr_n, dim_T_eev_n) / k_ref_;
 
         const double* Y_n = mixture_->GetMassFraction();
         aDual mixture_dx_n(DS_);
@@ -2881,7 +3389,9 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
 
         std::vector<aDual> Isx_n(ns_, aDual(DS_));
         std::vector<aDual> Isy_n(ns_, aDual(DS_));
+        mixture_->GetDiffusivity(&Ds[0], dim_T_tr_n, dim_T_eev_n);
         for (int i = 0; i < ns_; i++) {
+          Ds[i] /= D_ref_;
           Isx_n[i] = -Ds[i] * (dx_n[i] - Y_n[i] * mixture_dx_n);
           Isy_n[i] = -Ds[i] * (dy_n[i] - Y_n[i] * mixture_dy_n);
         }
@@ -2893,8 +3403,7 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
           Iy_sum_n = Iy_sum_n + Isy_n[idx];
         }
 
-        std::vector<aDual> diffflux_n(2 * ns_, aDual(DS_));  // check cost
-
+        std::vector<aDual> diffflux_n(2 * ns_, aDual(DS_));
         for (const int& idx : hidx) {
           diffflux_n[idx] = -Isx_n[idx] + Y_n[idx] * Ix_sum_n;
           diffflux_n[idx + ns_] = -Isy_n[idx] + Y_n[idx] * Iy_sum_n;
@@ -2913,9 +3422,10 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
           diffflux_n[eidx + ns_] = Mw_e * sum_y;
         }
 
-        const auto txx_n = c23_ * mu_n * (2.0 * ux_n - vy_n);
+        const auto tau_ax_n = (std::abs(y) < 1.0e-12) ? aDual(DS_, 0.0) : aDual(DS_,  static_cast<double>(ax_) * v_n / y);
+        const auto txx_n = c23_ * mu_n * (2.0 * ux_n - vy_n - tau_ax_n);
         const auto txy_n = mu_n * (uy_n + vx_n);
-        const auto tyy_n = c23_ * mu_n * (2.0 * vy_n - ux_n);
+        const auto tyy_n = c23_ * mu_n * (2.0 * vy_n - ux_n - tau_ax_n);
 
         aDual Jh_x_n(DS_);
         aDual Jh_y_n(DS_);
@@ -2923,9 +3433,9 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
         aDual Je_eev_y_n(DS_);
 
         for (int i = 0; i < ns_; i++) {
-          const double h = species[i]->GetEnthalpy(T_tr_n, T_eev_n);
+          const double h = species[i]->GetEnthalpy(dim_T_tr_n, dim_T_eev_n) / e_ref_;
           const double e_eev =
-              species[i]->GetElectronicVibrationEnergy(T_eev_n);
+              species[i]->GetElectronicVibrationEnergy(dim_T_eev_n) / e_ref_;
 
           Jh_x_n = Jh_x_n + diffflux_n[i] * h;
           Jh_y_n = Jh_y_n + diffflux_n[i + ns_] * h;
@@ -2940,71 +3450,91 @@ void EquationNS2DNeq2T::ComputeNumFluxJacobiLLF(const int num_points,
 
         ind = 0;
         for (int i = 0; i < ns_; i++)
-          flux2[ind++] = -0.5 * (diffflux_o[i] + diffflux_n[i] +
-                                 arvis_o * dx_o[i] + arvis_n * dx_n[i]);
-        flux2[ind++] = -0.5 * (txx_o + txx_n + arvis_o * ux_o + arvis_n * ux_n);
-        flux2[ind++] = -0.5 * (txy_o + txy_n + arvis_o * vx_o + arvis_n * vx_n);
+          flux2[ind++] = -0.5 * (diffflux_o[i] + diffflux_n[i]);
+        flux2[ind++] = -0.5 * (txx_o + txx_n);
+        flux2[ind++] = -0.5 * (txy_o + txy_n);
+        flux2[ind++] = -0.5 * (txx_o * u_o + txy_o * v_o + txx_n * u_n +
+          txy_n * v_n + q_tr_x_o + q_eev_x_o + Jh_x_o +
+          q_tr_x_n + q_eev_x_n + Jh_x_n);
         flux2[ind++] =
-            -0.5 * (txx_o * u_o + txy_o * v_o + txx_n * u_n + txy_n * v_n +
-                    q_tr_x_o + q_eev_x_o + Jh_x_o + q_tr_x_n + q_eev_x_n +
-                    Jh_x_n + arvis_o * Ttrx_o + arvis_n * Ttrx_n);
-        flux2[ind++] = -0.5 * (q_eev_x_o + Je_eev_x_o + q_eev_x_n + Je_eev_x_n +
-                               arvis_o * Teevx_o + arvis_n * Teevx_n);
+          -0.5 * (q_eev_x_o + Je_eev_x_o + q_eev_x_n + Je_eev_x_n);
         for (int i = 0; i < ns_; i++)
-          flux2[ind++] = -0.5 * (diffflux_o[i + ns_] + diffflux_n[i + ns_] +
-                                 arvis_o * dy_o[i] + arvis_n * dy_n[i]);
-        flux2[ind++] = -0.5 * (txy_o + txy_n + arvis_o * uy_o + arvis_n * uy_n);
-        flux2[ind++] = -0.5 * (tyy_o + tyy_n + arvis_o * vy_o + arvis_n * vy_n);
-        flux2[ind++] =
-            -0.5 * (txy_o * u_o + tyy_o * v_o + txy_n * u_n + tyy_n * v_n +
-                    q_tr_y_o + q_eev_y_o + Jh_y_o + q_tr_y_n + q_eev_y_n +
-                    Jh_y_n + arvis_o * Ttry_o + arvis_n * Ttry_n);
-        flux2[ind] = -0.5 * (q_eev_y_o + Je_eev_y_o + q_eev_y_n + Je_eev_y_n +
-                             arvis_o * Teevy_o + arvis_n * Teevy_n);
+          flux2[ind++] = -0.5 * (diffflux_o[i + ns_] + diffflux_n[i + ns_]);
+        flux2[ind++] = -0.5 * (txy_o + txy_n);
+        flux2[ind++] = -0.5 * (tyy_o + tyy_n);
+        flux2[ind++] = -0.5 * (txy_o * u_o + tyy_o * v_o + txy_n * u_n +
+          tyy_n * v_n + q_tr_y_o + q_eev_y_o + Jh_y_o +
+          q_tr_y_n + q_eev_y_n + Jh_y_n);
+        flux2[ind] = -0.5 * (q_eev_y_o + Je_eev_y_o + q_eev_y_n + Je_eev_y_n);
 
         // pdssd
         ind = DDSS_ * ipoint;
         for (int ds = 0; ds < DS_; ds++)
           for (int sd = 0; sd < DS_; sd++)
             flux_neighbor_grad_jacobi[ind++] = flux2[ds].df[sd];
+
+        for (int istate = 0; istate < S_; istate++)
+          for (int jstate = 0; jstate < S_; jstate++)
+            for (int idim = 0; idim < D_; idim++) {
+              const int irow = idim * S_ + istate;
+              const int icolumn = jstate * D_ + idim;
+              flux_neighbor_grad_jacobi[DDSS_ * ipoint + irow * DS_ + icolumn] -=
+                0.5 * arvis_n * neighbor_sol_jacobi[ipoint * SS_ + istate * S_ + jstate];
+            }
+
+        cblas_dscal(DDSS_, fy, &flux_neighbor_grad_jacobi[DDSS_ * ipoint], 1);
       }
     }
   }
 }
 
 // ------------------------------- Boundary -------------------------------- //
-std::shared_ptr<BoundaryNS2DNeq2T> BoundaryNS2DNeq2T::GetBoundary(
-    const std::string& type, const int bdry_tag, EquationNS2DNeq2T* equation) {
-  //if (!type.compare("SlipWall")) // need modification
-  //  return std::make_shared<SlipWallNS2DNeq2T>(bdry_tag, equation);
-  //else if (!type.compare("AdiabaticWall"))
-  //  return std::make_shared<AdiabaticWallNS2DNeq2T>(bdry_tag, equation);
-  //else if (!type.compare("IsothermalWall"))
-  //  return std::make_shared<IsothermalWallNS2DNeq2T>(bdry_tag, equation);
-  //else if (!type.compare("SupersonicInflow"))
-  //  return std::make_shared<SupersonicInflowBdryNS2DNeq2T>(bdry_tag, equation);
-  //else if (!type.compare("SupersonicOutflow"))
-  //  return std::make_shared<SupersonicOutflowBdryNS2DNeq2T>(bdry_tag, equation);
-  //else if (!type.compare("CatalyticWall"))
-  //  return std::make_shared<CatalyticWallNS2DNeq2T>(bdry_tag, equation);
-  //else if (!type.compare("SuperCatalyticWall"))
-  //  return std::make_shared<SuperCatalyticWallNS2DNeq2T>(bdry_tag, equation);
+std::shared_ptr<BoundaryNS2DNeq2Tnondim> BoundaryNS2DNeq2Tnondim::GetBoundary(
+    const std::string& type, const int bdry_tag,
+    EquationNS2DNeq2Tnondim* equation) {
+  if (!type.compare("SlipWall"))
+    return std::make_shared<SlipWallNS2DNeq2Tnondim>(bdry_tag, equation);
+  if (!type.compare("AxiSymmetry"))
+    return std::make_shared<AxiSymmetryNS2DNeq2Tnondim>(bdry_tag, equation);
+  else if (!type.compare("IsothermalWall"))
+    return std::make_shared<IsothermalWallNS2DNeq2Tnondim>(bdry_tag, equation);
+  else if (!type.compare("LimitingIsothermalWall"))
+    return std::make_shared<LimitingIsothermalWallNS2DNeq2Tnondim>(bdry_tag, equation);
+  else if (!type.compare("SupersonicInflow"))
+    return std::make_shared<SupersonicInflowBdryNS2DNeq2Tnondim>(bdry_tag,
+                                                                 equation);
+  else if (!type.compare("SupersonicOutflow"))
+    return std::make_shared<SupersonicOutflowBdryNS2DNeq2Tnondim>(bdry_tag,
+                                                                  equation);
+  else if (!type.compare("CatalyticWall"))
+    return std::make_shared<CatalyticWallNS2DNeq2Tnondim>(bdry_tag, equation);
+  else if (!type.compare("SuperCatalyticWall"))
+    return std::make_shared<SuperCatalyticWallNS2DNeq2Tnondim>(bdry_tag,
+                                                               equation);
   ERROR_MESSAGE("Wrong boundary condition (no-exist):" + type + "\n");
   return nullptr;
 }
 // Boundary Name = SlilpWall
 // Dependency: -
-SlipWallNS2DNeq2T::SlipWallNS2DNeq2T(const int bdry_tag,
-                                     EquationNS2DNeq2T* equation)
-    : BoundaryNS2DNeq2T(bdry_tag, equation) {
-  MASTER_MESSAGE("SlipWall (tag=" + std::to_string(bdry_tag) + ")\n");
+SlipWallNS2DNeq2Tnondim::SlipWallNS2DNeq2Tnondim(
+    const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
+    : BoundaryNS2DNeq2Tnondim(bdry_tag, equation) {
+  auto& config = AVOCADO_CONFIG;
+  scale_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 0)));
+
+  MASTER_MESSAGE("SlipWall (tag=" + std::to_string(bdry_tag) +
+                 ")\n\tScale factor = " + std::to_string(scale_) + "\n");
+
+  if (scale_ > 1.0 || scale_ < 0.0)
+    ERROR_MESSAGE("Wrong scale factor imposed : " + std::to_string(scale_));
 }
-void SlipWallNS2DNeq2T::ComputeBdrySolution(
+void SlipWallNS2DNeq2Tnondim::ComputeBdrySolution(
     const int num_points, std::vector<double>& bdry_u,
     std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
     const std::vector<double>& owner_div_u, const std::vector<double>& normal,
     const std::vector<double>& coords, const double& time) {
   int ind = 0;
+  std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_NORMAL_PD(normal);
 
@@ -3012,8 +3542,8 @@ void SlipWallNS2DNeq2T::ComputeBdrySolution(
     GET_SOLUTION_PS(, owner_u);
     const double V = u * nx + v * ny;
 
-    const double u_new = u - nx * V;
-    const double v_new = v - ny * V;
+    const double u_new = u - scale_ * nx * V;
+    const double v_new = v - scale_ * ny * V;
 
     // ps
     ind = S_ * ipoint;
@@ -3025,42 +3555,68 @@ void SlipWallNS2DNeq2T::ComputeBdrySolution(
   }
   // Don't touch bdry_div_u.
 }
-void SlipWallNS2DNeq2T::ComputeBdryFlux(const int num_points,
-                                        std::vector<double>& flux, FACE_INPUTS,
-                                        const std::vector<double>& coords,
-                                        const double& time) {
-  static std::vector<double> Ds(ns_, 0.0);
-  static std::vector<double> Isx(ns_, 0.0);
-  static std::vector<double> Isy(ns_, 0.0);
-  static std::vector<double> hs(ns_, 0.0);
-  static std::vector<double> diffflux(2 * ns_, 0.0);
+void SlipWallNS2DNeq2Tnondim::ComputeBdryFlux(const int num_points,
+                                              std::vector<double>& flux,
+                                              FACE_INPUTS,
+                                              const std::vector<double>& coords,
+                                              const double& time) {
+  //static std::vector<double> Ds(ns_, 0.0);
+  //static std::vector<double> Isx(ns_, 0.0);
+  //static std::vector<double> Isy(ns_, 0.0);
+  //static std::vector<double> hs(ns_, 0.0);
+  //static std::vector<double> diffflux(2 * ns_, 0.0);
 
-  const auto& species = mixture_->GetSpecies();
-  const auto& hidx = mixture_->GetHeavyParticleIdx();
-  const auto& eidx = mixture_->GetElectronIndex();
+  //const auto& species = mixture_->GetSpecies();
+  //const auto& hidx = mixture_->GetHeavyParticleIdx();
+  //const auto& eidx = mixture_->GetElectronIndex();
 
-  int ind = 0;
-  for (int ipoint = 0; ipoint < num_points; ipoint++) {
-    GET_SOLUTION_PS(, owner_u);
+  //int ind = 0;
+  //std::vector<double> dim_d(ns_);
+  //for (int ipoint = 0; ipoint < num_points; ipoint++) {
+  //  GET_NORMAL_PD(normal);
 
-    // Convective flux
-    mixture_->SetDensity(d);
-    const double mixture_p = mixture_->GetPressure(T_tr, T_eev);
+  //  GET_SOLUTION_PS(, owner_u);
 
-    ind = DS_ * ipoint;
-    for (int i = 0; i < ns_; i++) flux[ind++] = 0.0;
-    flux[ind++] = mixture_p;
-    flux[ind++] = 0.0;
-    flux[ind++] = 0.0;
-    flux[ind++] = 0.0;
-    for (int i = 0; i < ns_; i++) flux[ind++] = 0.0;
-    flux[ind++] = 0.0;
-    flux[ind++] = mixture_p;
-    flux[ind++] = 0.0;
-    flux[ind] = 0.0;
-  }
+  //  const auto V = u * nx + v * ny;
+  //  const auto u_new = u - nx * V;
+  //  const auto v_new = v - ny * V;
+
+  //  // Convective flux
+  //  mixture_->SetDensity(&dim_d[0]);
+  //  const double mixture_d = mixture_->GetTotalDensity() / rho_ref_;
+  //  const double mixture_p = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
+
+  //  double de = 0.0;
+  //  double de_eev = 0.0;
+  //  for (int i = 0; i < ns_; i++) {
+  //    const double e =
+  //        species[i]->GetInternalEnergy(dim_T_tr, dim_T_eev) / e_ref_;
+  //    const double e_eev =
+  //        species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
+  //    de += d[i] * e;
+  //    de_eev += d[i] * e_eev;
+  //  }
+  //  const auto du_new = mixture_d * u_new;
+  //  const auto dv_new = mixture_d * v_new;
+  //  const auto dE = de + 0.5 * (du_new * u_new + dv_new * v_new);
+
+  //  ind = DS_ * ipoint;
+  //  for (int i = 0; i < ns_; i++) flux[ind++] = d[i] * u_new;
+  //  flux[ind++] = du_new * u_new + mixture_p;
+  //  flux[ind++] = du_new * v_new;
+  //  flux[ind++] = (dE + mixture_p) * u_new;
+  //  flux[ind++] = de_eev * u_new;
+  //  for (int i = 0; i < ns_; i++) flux[ind++] = d[i] * v_new;
+  //  flux[ind++] = dv_new * u_new;
+  //  flux[ind++] = dv_new * v_new + mixture_p;
+  //  flux[ind++] = (dE + mixture_p) * v_new;
+  //  flux[ind] = de_eev * v_new;
+  //}
+  equation_->ComputeNumFlux(num_points, flux, owner_cell, -1, owner_u,
+                            owner_div_u, neighbor_u, owner_div_u,
+                            normal, coords);  // for debug
 }
-void SlipWallNS2DNeq2T::ComputeBdrySolutionJacobi(
+void SlipWallNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
     const int num_points, double* bdry_u_jacobi,
     const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
     const std::vector<double>& normal, const std::vector<double>& coords,
@@ -3079,11 +3635,11 @@ void SlipWallNS2DNeq2T::ComputeBdrySolutionJacobi(
     aDual u(S_, owner_u[ind++], ns_);
     aDual v(S_, owner_u[ind++], ns_ + 1);
     aDual T_tr(S_, owner_u[ind++], ns_ + 2);
-    aDual T_eev(S_, owner_u[ind++], ns_ + 3);
+    aDual T_eev(S_, owner_u[ind], ns_ + 3);
 
     const auto V = u * nx + v * ny;
-    const auto u_new = u - nx * V;
-    const auto v_new = v - ny * V;
+    const auto u_new = u - scale_ * nx * V;
+    const auto v_new = v - scale_ * ny * V;
 
     for (int i = 0; i < ns_; i++) bdry_sol[i] = d[i];
     bdry_sol[ns_] = u_new;
@@ -3096,10 +3652,259 @@ void SlipWallNS2DNeq2T::ComputeBdrySolutionJacobi(
       for (int j = 0; j < S_; j++) bdry_u_jacobi[ind++] = bdry_sol[i].df[j];
   }
 }
-void SlipWallNS2DNeq2T::ComputeBdryFluxJacobi(
+void SlipWallNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
     const int num_points, std::vector<double>& flux_jacobi,
     std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
     const std::vector<double>& coords, const double& time) {
+  // flux_jacobi(ds1s2) = F(ds1) over U(s2)
+  // flux_grad_jacobi(d1s1 s2d2) = F(d1s1) over gradU(d2s2)
+  //int ind = 0;
+  //static std::vector<double> Ds(ns_, 0.0);
+  //static std::vector<double> Isx(ns_, 0.0);
+  //static std::vector<double> Isy(ns_, 0.0);
+  //static std::vector<double> hs(ns_, 0.0);
+  //static std::vector<aDual> flux1(DS_, aDual(S_));
+  //static std::vector<aDual> flux2(DS_, aDual(DS_));
+
+  //const auto& species = mixture_->GetSpecies();
+  //const auto& hidx = mixture_->GetHeavyParticleIdx();
+  //const auto& eidx = mixture_->GetElectronIndex();
+  //std::vector<double> dim_d(ns_);
+  //for (int ipoint = 0; ipoint < num_points; ipoint++) {
+  //  {
+  //    GET_NORMAL_PD(normal);
+
+  //    // ps
+  //    ind = S_ * ipoint;
+  //    std::vector<aDual> d(ns_, aDual(S_));
+  //    for (int i = 0; i < ns_; i++) {
+  //      dim_d[i] = owner_u[ind] * rho_ref_;
+  //      d[i] = aDual(S_, owner_u[ind++], i);
+  //    }
+  //    aDual u(S_, owner_u[ind++], ns_);
+  //    aDual v(S_, owner_u[ind++], ns_ + 1);
+  //    aDual T_tr(S_, owner_u[ind++], ns_ + 2);
+  //    aDual T_eev(S_, owner_u[ind], ns_ + 3);
+  //    const auto dim_T_tr = T_tr * T_ref_;
+  //    const auto dim_T_eev = T_eev * T_ref_;
+
+  //    GET_SOLUTION_GRAD_PDS(, owner_div_u);
+
+  //    // Convective flux
+  //    mixture_->SetDensity(&dim_d[0]);
+  //    aDual mixture_d(S_, mixture_->GetTotalDensity() / rho_ref_);
+  //    for (int i = 0; i < ns_; i++) mixture_d.df[i] = 1.0;
+
+  //    aDual mixture_p(S_);
+  //    mixture_p.f =
+  //        mixture_->GetPressureJacobian(dim_T_tr.f, dim_T_eev.f, &mixture_p.df[0]);
+  //    std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
+  //    std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
+  //    mixture_p.f /= p_ref_;
+  //    for (int i = 0; i < ns_; i++) mixture_p.df[i] *= rho_ref_ / p_ref_;
+  //    mixture_p.df[ns_ + 2] *= T_ref_ / p_ref_;
+  //    mixture_p.df[ns_ + 3] *= T_ref_ / p_ref_;
+
+  //    const auto V = u * nx + v * ny;
+  //    const auto u_new = u - nx * V;
+  //    const auto v_new = v - ny * V;
+
+  //    aDual de(S_);
+  //    aDual de_eev(S_);
+  //    for (int i = 0; i < ns_; i++) {
+  //      const auto e =
+  //          species[i]->GetInternalEnergy(dim_T_tr.f, dim_T_eev.f) / e_ref_;
+  //      const auto e_eev =
+  //          species[i]->GetElectronicVibrationEnergy(dim_T_eev.f) / e_ref_;
+  //      const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(dim_T_tr.f) *
+  //                         T_ref_ / e_ref_;
+  //      const auto Cv_eev =
+  //          species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev.f) * T_ref_ /
+  //          e_ref_;
+
+  //      de.f += d[i].f * e;
+  //      de.df[i] = e;
+  //      de.df[ns_ + 2] += d[i].f * Cv_tr;
+  //      de.df[ns_ + 3] += d[i].f * Cv_eev;
+
+  //      de_eev.f += d[i].f * e_eev;
+  //      de_eev.df[i] = e_eev;
+  //      de_eev.df[ns_ + 3] += d[i].f * Cv_eev;
+  //    }
+
+  //    const auto du_new = mixture_d * u_new;
+  //    const auto dv_new = mixture_d * v_new;
+  //    const auto dE = de + 0.5 * (du_new * u_new + dv_new * v_new);
+
+  //    ind = 0;
+  //    for (int i = 0; i < ns_; i++) flux1[ind++] = d[i] * u_new;
+  //    flux1[ind++] = du_new * u_new + mixture_p;
+  //    flux1[ind++] = du_new * v_new;
+  //    flux1[ind++] = (dE + mixture_p) * u_new;
+  //    flux1[ind++] = de_eev * u_new;
+  //    for (int i = 0; i < ns_; i++) flux1[ind++] = d[i] * v_new;
+  //    flux1[ind++] = dv_new * u_new;
+  //    flux1[ind++] = dv_new * v_new + mixture_p;
+  //    flux1[ind++] = (dE + mixture_p) * v_new;
+  //    flux1[ind] = de_eev * v_new;
+
+  //    // pdss
+  //    ind = DSS_ * ipoint;
+  //    for (int ds = 0; ds < DS_; ds++)
+  //      for (int istate = 0; istate < S_; istate++)
+  //        flux_jacobi[ind++] = flux1[ds].df[istate];
+  //  }
+  //}
+  //memset(&flux_grad_jacobi[0], 0, num_points * DDSS_ * sizeof(double));
+  // for debug
+  static const int max_num_bdry_points = equation_->GetMaxNumBdryPoints();
+  static std::vector<double> flux_neighbor_jacobi(max_num_bdry_points * DSS_);
+  static std::vector<double> flux_neighbor_grad_jacobi(max_num_bdry_points *
+                                                       DDSS_);
+  static std::vector<double> bdry_u_jacobi(max_num_bdry_points * SS_);
+
+  equation_->ComputeNumFluxJacobi(num_points, flux_jacobi, flux_neighbor_jacobi,
+                                  flux_grad_jacobi, flux_neighbor_grad_jacobi,
+                                  owner_cell, -1, owner_u, owner_div_u,
+                                  neighbor_u, owner_div_u, normal, coords);
+  ComputeBdrySolutionJacobi(num_points, &bdry_u_jacobi[0], owner_u, owner_div_u,
+                            normal, coords, time);
+
+  for (int ipoint = 0; ipoint < num_points; ipoint++)
+    gemmAB(1.0, &flux_neighbor_jacobi[ipoint * DSS_],
+           &bdry_u_jacobi[ipoint * SS_], 1.0, &flux_jacobi[ipoint * DSS_], DS_,
+           S_, S_);
+}
+// Boundary Name = SlilpWall
+// Dependency: -
+AxiSymmetryNS2DNeq2Tnondim::AxiSymmetryNS2DNeq2Tnondim(
+  const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
+  : BoundaryNS2DNeq2Tnondim(bdry_tag, equation) {
+  MASTER_MESSAGE("AxiSymmetry (tag=" + std::to_string(bdry_tag) +
+    ")\n");
+}
+void AxiSymmetryNS2DNeq2Tnondim::ComputeBdrySolution(
+  const int num_points, std::vector<double>& bdry_u,
+  std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
+  const std::vector<double>& owner_div_u, const std::vector<double>& normal,
+  const std::vector<double>& coords, const double& time) {
+  int ind = 0;
+  std::vector<double> dim_d(ns_);
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    GET_SOLUTION_PS(, owner_u);
+
+    const double u_new = u;
+    const double v_new = 0.0;
+
+    // ps
+    ind = S_ * ipoint;
+    for (int i = 0; i < ns_; i++) bdry_u[ind++] = d[i];
+    bdry_u[ind++] = u_new;
+    bdry_u[ind++] = v_new;
+    bdry_u[ind++] = T_tr;
+    bdry_u[ind] = T_eev;
+  }
+  // Don't touch bdry_div_u.
+}
+void AxiSymmetryNS2DNeq2Tnondim::ComputeBdryFlux(const int num_points,
+  std::vector<double>& flux,
+  FACE_INPUTS,
+  const std::vector<double>& coords,
+  const double& time) {
+  static std::vector<double> Ds(ns_, 0.0);
+  static std::vector<double> Isx(ns_, 0.0);
+  static std::vector<double> Isy(ns_, 0.0);
+  static std::vector<double> hs(ns_, 0.0);
+  static std::vector<double> diffflux(2 * ns_, 0.0);
+
+  const auto& species = mixture_->GetSpecies();
+  const auto& hidx = mixture_->GetHeavyParticleIdx();
+  const auto& eidx = mixture_->GetElectronIndex();
+
+  int ind = 0;
+  std::vector<double> dim_d(ns_);
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    GET_SOLUTION_PS(, owner_u);
+
+    const auto u_new = u;
+    const auto v_new = 0.0;
+
+    // Convective flux
+    mixture_->SetDensity(&dim_d[0]);
+    const double mixture_d = mixture_->GetTotalDensity() / rho_ref_;
+    const double mixture_p = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
+
+    double de = 0.0;
+    double de_eev = 0.0;
+    for (int i = 0; i < ns_; i++) {
+      const double e =
+          species[i]->GetInternalEnergy(dim_T_tr, dim_T_eev) / e_ref_;
+      const double e_eev =
+          species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
+      de += d[i] * e;
+      de_eev += d[i] * e_eev;
+    }
+    const auto du_new = mixture_d * u_new;
+    const auto dv_new = mixture_d * v_new;
+    const auto dE = de + 0.5 * (du_new * u_new + dv_new * v_new);
+
+    ind = DS_ * ipoint;
+    for (int i = 0; i < ns_; i++) flux[ind++] = d[i] * u_new;
+    flux[ind++] = du_new * u_new + mixture_p;
+    flux[ind++] = du_new * v_new;
+    flux[ind++] = (dE + mixture_p) * u_new;
+    flux[ind++] = de_eev * u_new;
+    for (int i = 0; i < ns_; i++) flux[ind++] = d[i] * v_new;
+    flux[ind++] = dv_new * u_new;
+    flux[ind++] = dv_new * v_new + mixture_p;
+    flux[ind++] = (dE + mixture_p) * v_new;
+    flux[ind] = de_eev * v_new;
+  }
+}
+void AxiSymmetryNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
+  const int num_points, double* bdry_u_jacobi,
+  const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
+  const std::vector<double>& normal, const std::vector<double>& coords,
+  const double& time) {
+  static std::vector<aDual> bdry_sol(S_, aDual(S_));
+  int ind = 0;
+  memset(bdry_u_jacobi, 0, num_points * SS_ * sizeof(double));
+
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    ind = S_ * ipoint;
+    std::vector<aDual> d(ns_, aDual(S_));
+    for (int i = 0; i < ns_; i++) d[i] = aDual(S_, owner_u[ind++], i);
+    aDual u(S_, owner_u[ind++], ns_);
+    aDual v(S_, owner_u[ind++], ns_ + 1);
+    aDual T_tr(S_, owner_u[ind++], ns_ + 2);
+    aDual T_eev(S_, owner_u[ind], ns_ + 3);
+
+    const auto u_new = u;
+    const auto v_new = aDual(S_, 0.0);
+
+    for (int i = 0; i < ns_; i++) bdry_sol[i] = d[i];
+    bdry_sol[ns_] = u_new;
+    bdry_sol[ns_ + 1] = v_new;
+    bdry_sol[ns_ + 2] = T_tr;
+    bdry_sol[ns_ + 3] = T_eev;
+
+    ind = SS_ * ipoint;
+    for (int i = 0; i < S_; i++)
+      for (int j = 0; j < S_; j++) bdry_u_jacobi[ind++] = bdry_sol[i].df[j];
+  }
+}
+void AxiSymmetryNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
+  const int num_points, std::vector<double>& flux_jacobi,
+  std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
+  const std::vector<double>& coords, const double& time) {
   // flux_jacobi(ds1s2) = F(ds1) over U(s2)
   // flux_grad_jacobi(d1s1 s2d2) = F(d1s1) over gradU(d2s2)
   int ind = 0;
@@ -3113,40 +3918,83 @@ void SlipWallNS2DNeq2T::ComputeBdryFluxJacobi(
   const auto& species = mixture_->GetSpecies();
   const auto& hidx = mixture_->GetHeavyParticleIdx();
   const auto& eidx = mixture_->GetElectronIndex();
-
+  std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     {
+      GET_NORMAL_PD(normal);
+
       // ps
       ind = S_ * ipoint;
       std::vector<aDual> d(ns_, aDual(S_));
-      for (int i = 0; i < ns_; i++) d[i] = aDual(S_, owner_u[ind++], i);
+      for (int i = 0; i < ns_; i++) {
+        dim_d[i] = owner_u[ind] * rho_ref_;
+        d[i] = aDual(S_, owner_u[ind++], i);
+      }
       aDual u(S_, owner_u[ind++], ns_);
       aDual v(S_, owner_u[ind++], ns_ + 1);
       aDual T_tr(S_, owner_u[ind++], ns_ + 2);
-      aDual T_eev(S_, owner_u[ind++], ns_ + 3);
+      aDual T_eev(S_, owner_u[ind], ns_ + 3);
+      const auto dim_T_tr = T_tr * T_ref_;
+      const auto dim_T_eev = T_eev * T_ref_;
+
+      GET_SOLUTION_GRAD_PDS(, owner_div_u);
 
       // Convective flux
-      mixture_->SetDensity(&owner_u[S_ * ipoint]);
-      aDual mixture_d(S_, mixture_->GetTotalDensity());
+      mixture_->SetDensity(&dim_d[0]);
+      aDual mixture_d(S_, mixture_->GetTotalDensity() / rho_ref_);
       for (int i = 0; i < ns_; i++) mixture_d.df[i] = 1.0;
 
       aDual mixture_p(S_);
       mixture_p.f =
-          mixture_->GetPressureJacobian(T_tr.f, T_eev.f, &mixture_p.df[0]);
+          mixture_->GetPressureJacobian(dim_T_tr.f, dim_T_eev.f, &mixture_p.df[0]);
       std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
       std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
+      mixture_p.f /= p_ref_;
+      for (int i = 0; i < ns_; i++) mixture_p.df[i] *= rho_ref_ / p_ref_;
+      mixture_p.df[ns_ + 2] *= T_ref_ / p_ref_;
+      mixture_p.df[ns_ + 3] *= T_ref_ / p_ref_;
+
+      const auto u_new = u;
+      const auto v_new = aDual(S_, 0.0);
+
+      aDual de(S_);
+      aDual de_eev(S_);
+      for (int i = 0; i < ns_; i++) {
+        const auto e =
+            species[i]->GetInternalEnergy(dim_T_tr.f, dim_T_eev.f) / e_ref_;
+        const auto e_eev =
+            species[i]->GetElectronicVibrationEnergy(dim_T_eev.f) / e_ref_;
+        const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(dim_T_tr.f) *
+                           T_ref_ / e_ref_;
+        const auto Cv_eev =
+            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev.f) * T_ref_ /
+            e_ref_;
+
+        de.f += d[i].f * e;
+        de.df[i] = e;
+        de.df[ns_ + 2] += d[i].f * Cv_tr;
+        de.df[ns_ + 3] += d[i].f * Cv_eev;
+
+        de_eev.f += d[i].f * e_eev;
+        de_eev.df[i] = e_eev;
+        de_eev.df[ns_ + 3] += d[i].f * Cv_eev;
+      }
+
+      const auto du_new = mixture_d * u_new;
+      const auto dv_new = mixture_d * v_new;
+      const auto dE = de + 0.5 * (du_new * u_new + dv_new * v_new);
 
       ind = 0;
-      for (int i = 0; i < ns_; i++) flux1[ind++] = aDual(S_, 0);
-      flux1[ind++] = mixture_p;
-      flux1[ind++] = aDual(S_, 0);
-      flux1[ind++] = aDual(S_, 0);
-      flux1[ind++] = aDual(S_, 0);
-      for (int i = 0; i < ns_; i++) flux1[ind++] = aDual(S_, 0);
-      flux1[ind++] = aDual(S_, 0);
-      flux1[ind++] = mixture_p;
-      flux1[ind++] = aDual(S_, 0);
-      flux1[ind] = aDual(S_, 0);
+      for (int i = 0; i < ns_; i++) flux1[ind++] = d[i] * u_new;
+      flux1[ind++] = du_new * u_new + mixture_p;
+      flux1[ind++] = du_new * v_new;
+      flux1[ind++] = (dE + mixture_p) * u_new;
+      flux1[ind++] = de_eev * u_new;
+      for (int i = 0; i < ns_; i++) flux1[ind++] = d[i] * v_new;
+      flux1[ind++] = dv_new * u_new;
+      flux1[ind++] = dv_new * v_new + mixture_p;
+      flux1[ind++] = (dE + mixture_p) * v_new;
+      flux1[ind] = de_eev * v_new;
 
       // pdss
       ind = DSS_ * ipoint;
@@ -3157,19 +4005,410 @@ void SlipWallNS2DNeq2T::ComputeBdryFluxJacobi(
   }
   memset(&flux_grad_jacobi[0], 0, num_points * DDSS_ * sizeof(double));
 }
-// Boundary Name = AdiabaticWall
-// Dependency: -
-AdiabaticWallNS2DNeq2T::AdiabaticWallNS2DNeq2T(const int bdry_tag,
-                                     EquationNS2DNeq2T* equation)
-    : BoundaryNS2DNeq2T(bdry_tag, equation) {
-  MASTER_MESSAGE("AdiabaticWall (tag=" + std::to_string(bdry_tag) + ")\n");
+// Boundary Name = IsothermalWall
+// Dependency: Twall
+IsothermalWallNS2DNeq2Tnondim::IsothermalWallNS2DNeq2Tnondim(
+    const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
+    : BoundaryNS2DNeq2Tnondim(bdry_tag, equation) {
+  auto& config = AVOCADO_CONFIG;
+  scale_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 0)));
+  Twall_ =
+      std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 1))) / T_ref_;
+
+  MASTER_MESSAGE("IsothermalWall (tag=" + std::to_string(bdry_tag) +
+                 ")\n\tTwall = " + std::to_string(Twall_) +
+                 "\n\tScale factor = " + std::to_string(scale_) + "\n");
+
+  if (scale_ > 1.0 || scale_ < 0.0)
+    ERROR_MESSAGE("Wrong scale factor imposed : " + std::to_string(scale_));
 }
-void AdiabaticWallNS2DNeq2T::ComputeBdrySolution(
+void IsothermalWallNS2DNeq2Tnondim::ComputeBdrySolution(
     const int num_points, std::vector<double>& bdry_u,
     std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
     const std::vector<double>& owner_div_u, const std::vector<double>& normal,
     const std::vector<double>& coords, const double& time) {
+  const auto& species = mixture_->GetSpecies();
   int ind = 0;
+  std::vector<double> dim_d(ns_);
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    GET_SOLUTION_PS(, owner_u);
+
+    //mixture_->SetDensity(&dim_d[0]);
+    //const double mixture_d = mixture_->GetTotalDensity() / rho_ref_;
+    //const double mixture_p =
+    //    mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
+
+    //double sum = 0.0;
+    //const double* Y = mixture_->GetMassFraction();
+    //for (int i = 0; i < ns_; i++) {
+    //  const double R = species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
+    //  sum = sum + Y[i] * R * Twall_;
+    //}
+    //const double d_wall = mixture_p / sum;
+
+    // ps
+    ind = S_ * ipoint;
+    //for (int i = 0; i < ns_; i++) bdry_u[ind++] = Y[i] * d_wall;
+    for (int i = 0; i < ns_; i++) bdry_u[ind++] = d[i];
+    bdry_u[ind++] = -scale_ * u;
+    bdry_u[ind++] = -scale_ * v;
+    bdry_u[ind++] = (1.0 - scale_) * (T_tr - Twall_) + Twall_;
+    bdry_u[ind] = (1.0 - scale_) * (T_eev - Twall_) + Twall_;
+  }
+  // Don't touch bdry_div_u.
+}
+void IsothermalWallNS2DNeq2Tnondim::ComputeBdryFlux(
+    const int num_points, std::vector<double>& flux, FACE_INPUTS,
+    const std::vector<double>& coords, const double& time) {
+  //static std::vector<double> Ds(ns_, 0.0);
+  //static std::vector<double> Isx(ns_, 0.0);
+  //static std::vector<double> Isy(ns_, 0.0);
+  //static std::vector<double> hs(ns_, 0.0);
+  //static std::vector<double> diffflux(2 * ns_, 0.0);
+  //static std::vector<double> d_new(ns_, 0.0);
+  //static double dim_Twall = Twall_ * T_ref_;
+
+  //const auto& species = mixture_->GetSpecies();
+  //const auto& hidx = mixture_->GetHeavyParticleIdx();
+  //const auto& eidx = mixture_->GetElectronIndex();
+  //// need check
+  //int ind = 0;
+  //std::vector<double> dim_d(ns_);
+  //for (int ipoint = 0; ipoint < num_points; ipoint++) {
+  //  GET_SOLUTION_PS(, owner_u);
+
+  //  GET_SOLUTION_GRAD_PDS(, owner_div_u);
+
+  //  // Convective flux
+  //  mixture_->SetDensity(&dim_d[0]);
+  //  const double mixture_d = mixture_->GetTotalDensity() / rho_ref_;
+  //  const double mixture_p = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
+
+  //  double sum = 0.0;
+  //  const double* Y = mixture_->GetMassFraction();
+  //  for (int i = 0; i < ns_; i++) {
+  //    const double R = species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
+  //    sum = sum + Y[i] * R * Twall_;
+  //  }
+  //  const double d_wall = mixture_p / sum;
+  //  for (int i = 0; i < ns_; i++) d_new[i] = Y[i] * d_wall * rho_ref_;
+  //  mixture_->SetDensity(&d_new[0]);
+
+  //  // Viscous flux
+  //  const double mu = mixture_->GetViscosity(dim_Twall, dim_Twall) / mu_ref_;
+  //  const double k_tr =
+  //      mixture_->GetTransRotationConductivity(dim_Twall, dim_Twall) / k_ref_;
+  //  const double k_eev =
+  //      mixture_->GetElectronicVibrationConductivity(dim_Twall, dim_Twall) / k_ref_;
+
+  //  const auto txx = c23_ * mu * (2.0 * ux - vy);
+  //  const auto txy = mu * (uy + vx);
+  //  const auto tyy = c23_ * mu * (2.0 * vy - ux);
+
+  //  const double q_tr_x = k_tr * Ttrx;
+  //  const double q_tr_y = k_tr * Ttry;
+  //  const double q_eev_x = k_eev * Teevx;
+  //  const double q_eev_y = k_eev * Teevy;
+
+  //  ind = DS_ * ipoint;
+  //  for (int i = 0; i < ns_; i++) flux[ind++] = 0.0;
+  //  flux[ind++] = mixture_p - txx;
+  //  flux[ind++] = -txy;
+  //  flux[ind++] = -q_tr_x - q_eev_x;
+  //  flux[ind++] = -q_eev_x;
+  //  for (int i = 0; i < ns_; i++) flux[ind++] = 0.0;
+  //  flux[ind++] = -txy;
+  //  flux[ind++] = mixture_p - tyy;
+  //  flux[ind++] = -q_tr_y - q_eev_y;
+  //  flux[ind] = -q_eev_y;
+  //}
+  equation_->ComputeNumFlux(num_points, flux, owner_cell, -1, owner_u,
+                            owner_div_u, neighbor_u, owner_div_u,
+                            normal, coords);  // Weak
+}
+void IsothermalWallNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
+    const int num_points, double* bdry_u_jacobi,
+    const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
+    const std::vector<double>& normal, const std::vector<double>& coords,
+    const double& time) {
+  static std::vector<aDual> bdry_sol(S_, aDual(S_));
+  int ind = 0;
+  memset(bdry_u_jacobi, 0, num_points * SS_ * sizeof(double));
+
+  const auto& species = mixture_->GetSpecies();
+
+  std::vector<double> dim_d(ns_);
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    ind = S_ * ipoint;
+    std::vector<aDual> d(ns_, aDual(S_));
+    for (int i = 0; i < ns_; i++) {
+      //dim_d[i] = owner_u[ind] * rho_ref_;
+      d[i] = aDual(S_, owner_u[ind++], i);
+    }
+    aDual u(S_, owner_u[ind++], ns_);
+    aDual v(S_, owner_u[ind++], ns_ + 1);
+    aDual T_tr(S_, owner_u[ind++], ns_ + 2);
+    aDual T_eev(S_, owner_u[ind], ns_ + 3);
+    //const auto dim_T_tr = T_tr * T_ref_;
+    //const auto dim_T_eev = T_eev * T_ref_;
+
+    //mixture_->SetDensity(&dim_d[0]);
+    //aDual mixture_d(S_, 0.0);
+    //for (int i = 0; i < ns_; i++) mixture_d = mixture_d + d[i];
+    //const auto mixture_d_inv = 1.0 / mixture_d;
+
+    //aDual mixture_p(S_);
+    //mixture_p.f = mixture_->GetPressureJacobian(dim_T_tr.f, dim_T_eev.f,
+    //                                            &mixture_p.df[0]);
+    //std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
+    //std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
+    //mixture_p.f /= p_ref_;
+    //for (int i = 0; i < ns_; i++) mixture_p.df[i] *= rho_ref_ / p_ref_;
+    //mixture_p.df[ns_ + 2] *= T_ref_ / p_ref_;
+    //mixture_p.df[ns_ + 3] *= T_ref_ / p_ref_;
+
+    //aDual sum(S_, 0.0);
+    //for (int i = 0; i < ns_; i++) {
+    //  const double R = species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
+    //  const auto Y = d[i] * mixture_d_inv;
+    //  sum = sum + Y * R * Twall_;
+    //}
+    //const auto mixture_d_wall = mixture_p / sum;
+
+    //for (int i = 0; i < ns_; i++)
+    //  bdry_sol[i] = d[i] * mixture_d_wall * mixture_d_inv;
+    for (int i = 0; i < ns_; i++) bdry_sol[i] = d[i]; // weak
+    bdry_sol[ns_] = -scale_ * u;
+    bdry_sol[ns_ + 1] = -scale_ * v;
+    bdry_sol[ns_ + 2] = (1.0 - scale_) * (T_tr - Twall_) + aDual(S_, Twall_);
+    bdry_sol[ns_ + 3] = (1.0 - scale_) * (T_eev - Twall_) + aDual(S_, Twall_);
+
+    ind = SS_ * ipoint;
+    for (int i = 0; i < S_; i++)
+      for (int j = 0; j < S_; j++) bdry_u_jacobi[ind++] = bdry_sol[i].df[j];
+  }
+}
+void IsothermalWallNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
+    const int num_points, std::vector<double>& flux_jacobi,
+    std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
+    const std::vector<double>& coords, const double& time) {
+  // flux_jacobi(ds1s2) = F(ds1) over U(s2)
+  // flux_grad_jacobi(d1s1 s2d2) = F(d1s1) over gradU(d2s2)
+
+  // Strong
+  //static std::vector<double> Ds(ns_, 0.0);
+  //static std::vector<double> Isx(ns_, 0.0);
+  //static std::vector<double> Isy(ns_, 0.0);
+  //static std::vector<double> hs(ns_, 0.0);
+  //static std::vector<double> d_new(ns_, 0.0);
+  //static std::vector<aDual> flux1(DS_, aDual(S_));
+  //static std::vector<aDual> flux2(DS_, aDual(DS_));
+  //static double dim_Twall = Twall_ * T_ref_;
+
+  //const auto& species = mixture_->GetSpecies();
+  //const auto& hidx = mixture_->GetHeavyParticleIdx();
+  //const auto& eidx = mixture_->GetElectronIndex();
+
+  //int ind = 0;
+  //std::vector<double> dim_d(ns_);
+  //for (int ipoint = 0; ipoint < num_points; ipoint++) {
+  //  {
+  //    // ps
+  //    ind = S_ * ipoint;
+  //    std::vector<aDual> d(ns_, aDual(S_));
+  //    for (int i = 0; i < ns_; i++) {
+  //      dim_d[i] = owner_u[ind] * rho_ref_;
+  //      d[i] = aDual(S_, owner_u[ind++], i);
+  //    }
+  //    aDual u(S_, owner_u[ind++], ns_);
+  //    aDual v(S_, owner_u[ind++], ns_ + 1);
+  //    aDual T_tr(S_, owner_u[ind++], ns_ + 2);
+  //    aDual T_eev(S_, owner_u[ind], ns_ + 3);
+  //    const auto dim_T_tr = T_tr * T_ref_;
+  //    const auto dim_T_eev = T_eev * T_ref_;
+
+  //    GET_SOLUTION_GRAD_PDS(, owner_div_u);
+
+  //    // Convective flux
+  //    mixture_->SetDensity(&dim_d[0]);
+  //    aDual mixture_d(S_, 0.0);
+  //    for (int i = 0; i < ns_; i++) mixture_d = mixture_d + d[i];
+  //    const auto mixture_d_inv = 1.0 / mixture_d;
+
+  //    aDual mixture_p(S_);
+  //    mixture_p.f = mixture_->GetPressureJacobian(dim_T_tr.f, dim_T_eev.f,
+  //                                                &mixture_p.df[0]);
+  //    std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
+  //    std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
+  //    mixture_p.f /= p_ref_;
+  //    for (int i = 0; i < ns_; i++) mixture_p.df[i] *= rho_ref_ / p_ref_;
+  //    mixture_p.df[ns_ + 2] *= T_ref_ / p_ref_;
+  //    mixture_p.df[ns_ + 3] *= T_ref_ / p_ref_;
+
+  //    aDual sum(S_, 0.0);
+  //    std::vector<aDual> Y(ns_, aDual(S_));
+  //    for (int i = 0; i < ns_; i++) {
+  //      const double R = species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
+  //      Y[i] = d[i] * mixture_d_inv;
+  //      sum = sum + Y[i] * R * Twall_;
+  //    }
+  //    const auto mixture_d_wall = mixture_p / sum;
+  //    for (int i = 0; i < ns_; i++) d_new[i] = Y[i].f * mixture_d_wall.f * rho_ref_;
+  //    mixture_->SetDensity(&d_new[0]);
+
+  //    // Viscous flux // need check -> this assumes the dwall_ to be independent
+  //    // / check useless computations to solution variables
+  //    const auto mu = mixture_->GetViscosity(dim_Twall, dim_Twall) / mu_ref_;
+  //    const auto k_tr =
+  //        mixture_->GetTransRotationConductivity(dim_Twall, dim_Twall) / k_ref_;
+  //    const auto k_eev =
+  //        mixture_->GetElectronicVibrationConductivity(dim_Twall, dim_Twall) / k_ref_;
+
+  //    const aDual txx(S_, c23_ * mu * (2.0 * ux - vy));
+  //    const aDual txy(S_, mu * (uy + vx));
+  //    const aDual tyy(S_, c23_ * mu * (2.0 * vy - ux));
+
+  //    const aDual q_tr_x(S_, k_tr * Ttrx);
+  //    const aDual q_tr_y(S_, k_tr * Ttry);
+  //    const aDual q_eev_x(S_, k_eev * Teevx);
+  //    const aDual q_eev_y(S_, k_eev * Teevy);
+
+  //    ind = 0;
+  //    for (int i = 0; i < ns_; i++) flux1[ind++] = aDual(S_, 0.0);
+  //    flux1[ind++] = mixture_p - txx;
+  //    flux1[ind++] = -txy;
+  //    flux1[ind++] = -q_tr_x - q_eev_x;
+  //    flux1[ind++] = -q_eev_x;
+  //    for (int i = 0; i < ns_; i++) flux1[ind++] = aDual(S_, 0.0);
+  //    flux1[ind++] = -txy;
+  //    flux1[ind++] = mixture_p - tyy;
+  //    flux1[ind++] = -q_tr_y - q_eev_y;
+  //    flux1[ind] = -q_eev_y;
+
+  //    // pdss
+  //    ind = DSS_ * ipoint;
+  //    for (int ds = 0; ds < DS_; ds++)
+  //      for (int istate = 0; istate < S_; istate++)
+  //        flux_jacobi[ind++] = flux1[ds].df[istate];
+  //  }
+  //  {
+  //    GET_SOLUTION_PS(, owner_u);
+
+  //    // pds over psd
+  //    ind = DS_ * ipoint;
+  //    std::vector<aDual> dx(ns_, aDual(DS_));
+  //    for (int i = 0; i < ns_; i++)
+  //      dx[i] = aDual(DS_, owner_div_u[ind++], 2 * i);
+  //    const aDual ux(DS_, owner_div_u[ind++], 2 * ns_);
+  //    const aDual vx(DS_, owner_div_u[ind++], 2 * (ns_ + 1));
+  //    const aDual Ttrx(DS_, owner_div_u[ind++], 2 * (ns_ + 2));
+  //    const aDual Teevx(DS_, owner_div_u[ind++], 2 * (ns_ + 3));
+  //    std::vector<aDual> dy(ns_, aDual(DS_));
+  //    for (int i = 0; i < ns_; i++)
+  //      dy[i] = aDual(DS_, owner_div_u[ind++], 2 * i + 1);
+  //    const aDual uy(DS_, owner_div_u[ind++], 2 * ns_ + 1);
+  //    const aDual vy(DS_, owner_div_u[ind++], 2 * (ns_ + 1) + 1);
+  //    const aDual Ttry(DS_, owner_div_u[ind++], 2 * (ns_ + 2) + 1);
+  //    const aDual Teevy(DS_, owner_div_u[ind], 2 * (ns_ + 3) + 1);
+
+  //    mixture_->SetDensity(&dim_d[0]);
+  //    const double mixture_p = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
+
+  //    double sum = 0.0;
+  //    const double* Y = mixture_->GetMassFraction();
+  //    for (int i = 0; i < ns_; i++) {
+  //      const double R = species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
+  //      sum = sum + Y[i] * R * Twall_;
+  //    }
+  //    const double d_wall = mixture_p / sum;
+  //    for (int i = 0; i < ns_; i++) d_new[i] = Y[i] * d_wall * rho_ref_;
+  //    mixture_->SetDensity(&d_new[0]);
+
+  //    // Viscous flux
+  //    const auto mu = mixture_->GetViscosity(dim_Twall, dim_Twall) / mu_ref_;
+  //    const auto k_tr =
+  //        mixture_->GetTransRotationConductivity(dim_Twall, dim_Twall) / k_ref_;
+  //    const auto k_eev =
+  //        mixture_->GetElectronicVibrationConductivity(dim_Twall, dim_Twall) / k_ref_;
+
+  //    const aDual txx = c23_ * mu * (2.0 * ux - vy);
+  //    const aDual txy = mu * (uy + vx);
+  //    const aDual tyy = c23_ * mu * (2.0 * vy - ux);
+
+  //    const aDual q_tr_x = k_tr * Ttrx;
+  //    const aDual q_tr_y = k_tr * Ttry;
+  //    const aDual q_eev_x = k_eev * Teevx;
+  //    const aDual q_eev_y = k_eev * Teevy;
+
+  //    ind = 0;
+  //    for (int i = 0; i < ns_; i++) flux2[ind++] = aDual(DS_, 0.0);
+  //    flux2[ind++] = -txx;
+  //    flux2[ind++] = -txy;
+  //    flux2[ind++] = -q_tr_x - q_eev_x;
+  //    flux2[ind++] = -q_eev_x;
+  //    for (int i = 0; i < ns_; i++) flux2[ind++] = aDual(DS_, 0.0);
+  //    flux2[ind++] = -txy;
+  //    flux2[ind++] = -tyy;
+  //    flux2[ind++] = -q_tr_y - q_eev_y;
+  //    flux2[ind] = -q_eev_y;
+
+  //    // pdssd
+  //    ind = DDSS_ * ipoint;
+  //    for (int ds = 0; ds < DS_; ds++)
+  //      for (int sd = 0; sd < DS_; sd++)
+  //        flux_grad_jacobi[ind++] = flux2[ds].df[sd];
+  //  }
+  //}
+  // Weak
+  static const int max_num_bdry_points = equation_->GetMaxNumBdryPoints();
+  static std::vector<double> flux_neighbor_jacobi(max_num_bdry_points * DSS_);
+  static std::vector<double> flux_neighbor_grad_jacobi(max_num_bdry_points *
+                                                       DDSS_);
+  static std::vector<double> bdry_u_jacobi(max_num_bdry_points * SS_);
+
+  equation_->ComputeNumFluxJacobi(num_points, flux_jacobi, flux_neighbor_jacobi,
+                                  flux_grad_jacobi, flux_neighbor_grad_jacobi,
+                                  owner_cell, -1, owner_u, owner_div_u,
+                                  neighbor_u, owner_div_u, normal, coords);
+  ComputeBdrySolutionJacobi(num_points, &bdry_u_jacobi[0], owner_u, owner_div_u,
+                            normal, coords, time);
+
+  for (int ipoint = 0; ipoint < num_points; ipoint++)
+    gemmAB(1.0, &flux_neighbor_jacobi[ipoint * DSS_],
+           &bdry_u_jacobi[ipoint * SS_], 1.0, &flux_jacobi[ipoint * DSS_], DS_,
+           S_, S_);
+}
+// Boundary Name = LimitingIsothermalWall
+// Dependency: Twall
+LimitingIsothermalWallNS2DNeq2Tnondim::LimitingIsothermalWallNS2DNeq2Tnondim(
+  const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
+  : BoundaryNS2DNeq2Tnondim(bdry_tag, equation) {
+  auto& config = AVOCADO_CONFIG;
+  scale_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 0)));
+  Twall_ =
+    std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 1))) / T_ref_;
+
+  MASTER_MESSAGE("LimitingIsothermalWall (tag=" + std::to_string(bdry_tag) +
+    ")\n\tTwall = " + std::to_string(Twall_) +
+    "\n\tScale factor = " + std::to_string(scale_) + "\n");
+
+  if (scale_ > 1.0 || scale_ < 0.0)
+    ERROR_MESSAGE("Wrong scale factor imposed : " + std::to_string(scale_));
+}
+void LimitingIsothermalWallNS2DNeq2Tnondim::ComputeBdrySolution(
+  const int num_points, std::vector<double>& bdry_u,
+  std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
+  const std::vector<double>& owner_div_u, const std::vector<double>& normal,
+  const std::vector<double>& coords, const double& time) {
+  const auto& species = mixture_->GetSpecies();
+  int ind = 0;
+  std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_NORMAL_PD(normal);
 
@@ -3179,296 +4418,60 @@ void AdiabaticWallNS2DNeq2T::ComputeBdrySolution(
     // ps
     ind = S_ * ipoint;
     for (int i = 0; i < ns_; i++) bdry_u[ind++] = d[i];
-    bdry_u[ind++] = 0.0;
-    bdry_u[ind++] = 0.0;
-    bdry_u[ind++] = T_tr;
-    bdry_u[ind] = T_eev;
-  }
-  // Don't touch bdry_div_u.
-}
-void AdiabaticWallNS2DNeq2T::ComputeBdryFlux(const int num_points,
-                                        std::vector<double>& flux, FACE_INPUTS,
-                                        const std::vector<double>& coords,
-                                        const double& time) {
-  static std::vector<double> Ds(ns_, 0.0);
-  static std::vector<double> Isx(ns_, 0.0);
-  static std::vector<double> Isy(ns_, 0.0);
-  static std::vector<double> hs(ns_, 0.0);
-  static std::vector<double> diffflux(2 * ns_, 0.0);
-
-  const auto& species = mixture_->GetSpecies();
-  const auto& hidx = mixture_->GetHeavyParticleIdx();
-  const auto& eidx = mixture_->GetElectronIndex();
-
-  int ind = 0;
-  for (int ipoint = 0; ipoint < num_points; ipoint++) {
-    GET_SOLUTION_PS(, owner_u);
-
-    GET_SOLUTION_GRAD_PDS(, owner_div_u);
-
-    // Convective flux
-    mixture_->SetDensity(d);
-    const double mixture_d = mixture_->GetTotalDensity();
-    const double mixture_p = mixture_->GetPressure(T_tr, T_eev);
-
-    // Viscous flux
-    const double mu = mixture_->GetViscosity(T_tr, T_eev);
-
-    const auto txx = c23_ * mu * (2.0 * ux - vy);
-    const auto txy = mu * (uy + vx);
-    const auto tyy = c23_ * mu * (2.0 * vy - ux);
-
-    ind = DS_ * ipoint;
-    for (int i = 0; i < ns_; i++) flux[ind++] = 0.0;
-    flux[ind++] = mixture_p - txx;
-    flux[ind++] = -txy;
-    flux[ind++] = 0.0;
-    flux[ind++] = 0.0;
-    for (int i = 0; i < ns_; i++) flux[ind++] = 0.0;
-    flux[ind++] = -txy;
-    flux[ind++] = mixture_p - tyy;
-    flux[ind++] = 0.0;
-    flux[ind] = 0.0;
-  }
-}
-void AdiabaticWallNS2DNeq2T::ComputeBdrySolutionJacobi(
-    const int num_points, double* bdry_u_jacobi,
-    const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
-    const std::vector<double>& normal, const std::vector<double>& coords,
-    const double& time) {
-  static std::vector<aDual> bdry_sol(S_, aDual(S_));
-  int ind = 0;
-  memset(bdry_u_jacobi, 0, num_points * SS_ * sizeof(double));
-
-  for (int ipoint = 0; ipoint < num_points; ipoint++) {
-    GET_NORMAL_PD(normal);
-
-    // ps
-    ind = S_ * ipoint;
-    std::vector<aDual> d(ns_, aDual(S_));
-    for (int i = 0; i < ns_; i++) d[i] = aDual(S_, owner_u[ind++], i);
-    aDual u(S_, owner_u[ind++], ns_);
-    aDual v(S_, owner_u[ind++], ns_ + 1);
-    const double& T_tr = owner_u[ind++];
-    const double& T_eev = owner_u[ind++];
-
-    for (int i = 0; i < ns_; i++) bdry_sol[i] = d[i];
-    bdry_sol[ns_] = aDual(S_, 0.0);
-    bdry_sol[ns_ + 1] = aDual(S_, 0.0);
-    bdry_sol[ns_ + 2] = T_tr;
-    bdry_sol[ns_ + 3] = T_eev;
-
-    ind = SS_ * ipoint;
-    for (int i = 0; i < S_; i++)
-      for (int j = 0; j < S_; j++) bdry_u_jacobi[ind++] = bdry_sol[i].df[j];
-  }
-}
-void AdiabaticWallNS2DNeq2T::ComputeBdryFluxJacobi(
-    const int num_points, std::vector<double>& flux_jacobi,
-    std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
-    const std::vector<double>& coords, const double& time) {
-  // flux_jacobi(ds1s2) = F(ds1) over U(s2)
-  // flux_grad_jacobi(d1s1 s2d2) = F(d1s1) over gradU(d2s2)
-  int ind = 0;
-  static std::vector<double> Ds(ns_, 0.0);
-  static std::vector<double> Isx(ns_, 0.0);
-  static std::vector<double> Isy(ns_, 0.0);
-  static std::vector<double> hs(ns_, 0.0);
-  static std::vector<aDual> flux1(DS_, aDual(S_));
-  static std::vector<aDual> flux2(DS_, aDual(DS_));
-
-  const auto& species = mixture_->GetSpecies();
-  const auto& hidx = mixture_->GetHeavyParticleIdx();
-  const auto& eidx = mixture_->GetElectronIndex();
-
-  for (int ipoint = 0; ipoint < num_points; ipoint++) {
-    {
-      // ps
-      ind = S_ * ipoint;
-      std::vector<aDual> d(ns_, aDual(S_));
-      for (int i = 0; i < ns_; i++) d[i] = aDual(S_, owner_u[ind++], i);
-      aDual u(S_, owner_u[ind++], ns_);
-      aDual v(S_, owner_u[ind++], ns_ + 1);
-      const double& T_tr = owner_u[ind++];
-      const double& T_eev = owner_u[ind++];
-
-      GET_SOLUTION_GRAD_PDS(, owner_div_u);
-
-      // Convective flux
-      mixture_->SetDensity(&owner_u[S_ * ipoint]);
-      aDual mixture_d(S_, 0.0);
-      for (int i = 0; i < ns_; i++) mixture_d = mixture_d + d[i];
-      const auto mixture_d_inv = 1.0 / mixture_d;
-
-      aDual mixture_p(S_, 0.0);
-      mixture_p.f =
-          mixture_->GetPressureJacobian(T_tr, T_eev, &mixture_p.df[0]);
-      std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
-      std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
-
-      // Viscous flux
-      const auto mu = mixture_->GetViscosity(T_tr, T_eev);
-      const aDual txx(S_, c23_ * mu * (2.0 * ux - vy));
-      const aDual txy(S_, mu * (uy + vx));
-      const aDual tyy(S_, c23_ * mu * (2.0 * vy - ux));
-
-      ind = 0;
-      for (int i = 0; i < ns_; i++) flux1[ind++] = aDual(S_, 0);
-      flux1[ind++] = mixture_p - txx;
-      flux1[ind++] = -txy;
-      flux1[ind++] = aDual(S_, 0);
-      flux1[ind++] = aDual(S_, 0);
-      for (int i = 0; i < ns_; i++) flux1[ind++] = aDual(S_, 0);
-      flux1[ind++] = -txy;
-      flux1[ind++] = mixture_p - tyy;
-      flux1[ind++] = aDual(S_, 0);
-      flux1[ind] = aDual(S_, 0);
-
-      // pdss
-      ind = DSS_ * ipoint;
-      for (int ds = 0; ds < DS_; ds++)
-        for (int istate = 0; istate < S_; istate++)
-          flux_jacobi[ind++] = flux1[ds].df[istate];
-    }
-    { 
-      GET_SOLUTION_PS(, owner_u);
-
-      // pds over psd
-      ind = DS_ * ipoint;
-      std::vector<aDual> dx(ns_, aDual(DS_));
-      for (int i = 0; i < ns_; i++)
-        dx[i] = aDual(DS_, owner_div_u[ind++], 2 * i);
-      const aDual ux(DS_, owner_div_u[ind++], 2 * ns_);
-      const aDual vx(DS_, owner_div_u[ind++], 2 * (ns_ + 1));
-      const aDual Ttrx(DS_, owner_div_u[ind++], 2 * (ns_ + 2));
-      const aDual Teevx(DS_, owner_div_u[ind++], 2 * (ns_ + 3));
-      std::vector<aDual> dy(ns_, aDual(DS_));
-      for (int i = 0; i < ns_; i++)
-        dy[i] = aDual(DS_, owner_div_u[ind++], 2 * i + 1);
-      const aDual uy(DS_, owner_div_u[ind++], 2 * ns_ + 1);
-      const aDual vy(DS_, owner_div_u[ind++], 2 * (ns_ + 1) + 1);
-      const aDual Ttry(DS_, owner_div_u[ind++], 2 * (ns_ + 2) + 1);
-      const aDual Teevy(DS_, owner_div_u[ind], 2 * (ns_ + 3) + 1);
-
-      mixture_->SetDensity(d);
-      const auto mu = mixture_->GetViscosity(T_tr, T_eev);
-
-      const aDual txx = c23_ * mu * (2.0 * ux - vy);
-      const aDual txy = mu * (uy + vx);
-      const aDual tyy = c23_ * mu * (2.0 * vy - ux);
-
-      ind = 0;
-      for (int i = 0; i < ns_; i++) flux2[ind++] = aDual(S_, 0);
-      flux2[ind++] = -txx;
-      flux2[ind++] = -txy;
-      flux2[ind++] = aDual(S_, 0);
-      flux2[ind++] = aDual(S_, 0);
-      for (int i = 0; i < ns_; i++) flux2[ind++] = aDual(S_, 0);
-      flux2[ind++] = -txy;
-      flux2[ind++] = -tyy;
-      flux2[ind++] = aDual(S_, 0);
-      flux2[ind] = aDual(S_, 0);
-
-            // pdssd
-      ind = DDSS_ * ipoint;
-      for (int ds = 0; ds < DS_; ds++)
-        for (int sd = 0; sd < DS_; sd++)
-          flux_grad_jacobi[ind++] = flux2[ds].df[sd];
-    }
-  }
-}
-// Boundary Name = IsothermalWall
-// Dependency: Twall
-IsothermalWallNS2DNeq2T::IsothermalWallNS2DNeq2T(const int bdry_tag,
-                                                 EquationNS2DNeq2T* equation)
-    : BoundaryNS2DNeq2T(bdry_tag, equation) {
-  auto& config = AVOCADO_CONFIG;
-  Twall_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 0)));
-
-  MASTER_MESSAGE("IsothermalWall (tag=" + std::to_string(bdry_tag) +
-                 ")\n\tTwall = " + std::to_string(Twall_) + "\n");
-}
-void IsothermalWallNS2DNeq2T::ComputeBdrySolution(
-    const int num_points, std::vector<double>& bdry_u,
-    std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
-    const std::vector<double>& owner_div_u, const std::vector<double>& normal,
-    const std::vector<double>& coords, const double& time) {
-  const auto& species = mixture_->GetSpecies();
-  int ind = 0;
-  for (int ipoint = 0; ipoint < num_points; ipoint++) {
-    GET_NORMAL_PD(normal);
-
-    // ps
-    GET_SOLUTION_PS(, owner_u);
-
-    mixture_->SetDensity(d);
-    const double mixture_d = mixture_->GetTotalDensity();
-    const double mixture_p = mixture_->GetPressure(T_tr, T_eev);
-
-    double sum = 0.0;
-    const double* Y = mixture_->GetMassFraction();
-    for (int i = 0; i < ns_; i++) {
-      const double R = species[i]->GetSpecificGasConstant();
-      sum = sum + Y[i] * R * Twall_;
-    }
-    const double d_wall = mixture_p / sum;
-
-    // ps
-    ind = S_ * ipoint;
-    for (int i = 0; i < ns_; i++) bdry_u[ind++] = Y[i] * d_wall;
-    bdry_u[ind++] = 0.0;
-    bdry_u[ind++] = 0.0;
+    bdry_u[ind++] = -u;
+    bdry_u[ind++] = -v;
     bdry_u[ind++] = Twall_;
     bdry_u[ind] = Twall_;
   }
   // Don't touch bdry_div_u.
 }
-void IsothermalWallNS2DNeq2T::ComputeBdryFlux(const int num_points,
-                                              std::vector<double>& flux,
-                                              FACE_INPUTS,
-                                              const std::vector<double>& coords,
-                                              const double& time) {
+void LimitingIsothermalWallNS2DNeq2Tnondim::ComputeBdryFlux(
+  const int num_points, std::vector<double>& flux, FACE_INPUTS,
+  const std::vector<double>& coords, const double& time) {
   static std::vector<double> Ds(ns_, 0.0);
   static std::vector<double> Isx(ns_, 0.0);
   static std::vector<double> Isy(ns_, 0.0);
   static std::vector<double> hs(ns_, 0.0);
   static std::vector<double> diffflux(2 * ns_, 0.0);
   static std::vector<double> d_new(ns_, 0.0);
+  static double dim_Twall = Twall_ * T_ref_;
 
   const auto& species = mixture_->GetSpecies();
   const auto& hidx = mixture_->GetHeavyParticleIdx();
   const auto& eidx = mixture_->GetElectronIndex();
   // need check
   int ind = 0;
+  std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_SOLUTION_PS(, owner_u);
 
     GET_SOLUTION_GRAD_PDS(, owner_div_u);
 
     // Convective flux
-    mixture_->SetDensity(d);
-    const double mixture_d = mixture_->GetTotalDensity();
-    const double mixture_p = mixture_->GetPressure(T_tr, T_eev);
+    mixture_->SetDensity(&dim_d[0]);
+    const double mixture_d = mixture_->GetTotalDensity() / rho_ref_;
+    const double mixture_p = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
 
     double sum = 0.0;
     const double* Y = mixture_->GetMassFraction();
     for (int i = 0; i < ns_; i++) {
-      const double R = species[i]->GetSpecificGasConstant();
+      const double R = species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
       sum = sum + Y[i] * R * Twall_;
     }
     const double d_wall = mixture_p / sum;
-    for (int i = 0; i < ns_; i++) d_new[i] = Y[i] * d_wall;
+    for (int i = 0; i < ns_; i++) d_new[i] = Y[i] * d_wall * rho_ref_;
     mixture_->SetDensity(&d_new[0]);
 
     // Viscous flux
-    const double mu = mixture_->GetViscosity(Twall_, Twall_);
-    const double k_tr = mixture_->GetTransRotationConductivity(Twall_, Twall_);
+    const double mu = mixture_->GetViscosity(dim_Twall, dim_Twall) / mu_ref_;
+    const double k_tr =
+        mixture_->GetTransRotationConductivity(dim_Twall, dim_Twall) / k_ref_;
     const double k_eev =
-        mixture_->GetElectronicVibrationConductivity(Twall_, Twall_);
+        mixture_->GetElectronicVibrationConductivity(dim_Twall, dim_Twall) / k_ref_;
 
-    const double txx = c23_ * mu * (2.0 * ux - vy);
-    const double txy = mu * (uy + vx);
-    const double tyy = c23_ * mu * (2.0 * vy - ux);
+    const auto txx = c23_ * mu * (2.0 * ux - vy);
+    const auto txy = mu * (uy + vx);
+    const auto tyy = c23_ * mu * (2.0 * vy - ux);
 
     const double q_tr_x = k_tr * Ttrx;
     const double q_tr_y = k_tr * Ttry;
@@ -3477,63 +4480,46 @@ void IsothermalWallNS2DNeq2T::ComputeBdryFlux(const int num_points,
 
     ind = DS_ * ipoint;
     for (int i = 0; i < ns_; i++) flux[ind++] = 0.0;
-    flux[ind++] = mixture_p - txx;
-    flux[ind++] = -txy;
-    flux[ind++] = -q_tr_x - q_eev_x;
-    flux[ind++] = -q_eev_x;
+    flux[ind++] = mixture_p - scale_ * txx;
+    flux[ind++] = -scale_ * txy;
+    flux[ind++] = -scale_ * q_tr_x - scale_ * q_eev_x;
+    flux[ind++] = -scale_ * q_eev_x;
     for (int i = 0; i < ns_; i++) flux[ind++] = 0.0;
-    flux[ind++] = -txy;
-    flux[ind++] = mixture_p - tyy;
-    flux[ind++] = -q_tr_y - q_eev_y;
-    flux[ind] = -q_eev_y;
+    flux[ind++] = -scale_ * txy;
+    flux[ind++] = mixture_p - scale_ * tyy;
+    flux[ind++] = -scale_ * q_tr_y - scale_ * q_eev_y;
+    flux[ind] = -scale_ * q_eev_y;
   }
 }
-void IsothermalWallNS2DNeq2T::ComputeBdrySolutionJacobi(
-    const int num_points, double* bdry_u_jacobi,
-    const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
-    const std::vector<double>& normal, const std::vector<double>& coords,
-    const double& time) {
+void LimitingIsothermalWallNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
+  const int num_points, double* bdry_u_jacobi,
+  const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
+  const std::vector<double>& normal, const std::vector<double>& coords,
+  const double& time) {
   static std::vector<aDual> bdry_sol(S_, aDual(S_));
   int ind = 0;
   memset(bdry_u_jacobi, 0, num_points * SS_ * sizeof(double));
 
   const auto& species = mixture_->GetSpecies();
 
+  std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_NORMAL_PD(normal);
 
     // ps
     ind = S_ * ipoint;
     std::vector<aDual> d(ns_, aDual(S_));
-    for (int i = 0; i < ns_; i++) d[i] = aDual(S_, owner_u[ind++], i);
+    for (int i = 0; i < ns_; i++) {
+      d[i] = aDual(S_, owner_u[ind++], i);
+    }
     aDual u(S_, owner_u[ind++], ns_);
     aDual v(S_, owner_u[ind++], ns_ + 1);
-    const double& T_tr = owner_u[ind++];
-    const double& T_eev = owner_u[ind];
+    aDual T_tr(S_, owner_u[ind++], ns_ + 2);
+    aDual T_eev(S_, owner_u[ind], ns_ + 3);
 
-    mixture_->SetDensity(&owner_u[S_ * ipoint]);
-    aDual mixture_d(S_, 0.0);
-    for (int i = 0; i < ns_; i++) mixture_d = mixture_d + d[i];
-    const auto mixture_d_inv = 1.0 / mixture_d;
-
-    aDual mixture_p(S_, 0.0);
-    mixture_p.f =
-        mixture_->GetPressureJacobian(T_tr, T_eev, &mixture_p.df[0]);
-    std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
-    std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
-
-    aDual sum(S_, 0.0);
-    for (int i = 0; i < ns_; i++) {
-      const double R = species[i]->GetSpecificGasConstant();
-      const auto Y = d[i] * mixture_d_inv;
-      sum = sum + Y * R * Twall_;
-    }
-    const auto mixture_d_wall = mixture_p / sum;
-
-    for (int i = 0; i < ns_; i++)
-      bdry_sol[i] = d[i] * mixture_d_wall * mixture_d_inv;
-    bdry_sol[ns_] = aDual(S_, 0.0);
-    bdry_sol[ns_ + 1] = aDual(S_, 0.0);
+    for (int i = 0; i < ns_; i++) bdry_sol[i] = d[i];
+    bdry_sol[ns_] = -u;
+    bdry_sol[ns_ + 1] = -v;
     bdry_sol[ns_ + 2] = aDual(S_, Twall_);
     bdry_sol[ns_ + 3] = aDual(S_, Twall_);
 
@@ -3542,13 +4528,14 @@ void IsothermalWallNS2DNeq2T::ComputeBdrySolutionJacobi(
       for (int j = 0; j < S_; j++) bdry_u_jacobi[ind++] = bdry_sol[i].df[j];
   }
 }
-void IsothermalWallNS2DNeq2T::ComputeBdryFluxJacobi(
-    const int num_points, std::vector<double>& flux_jacobi,
-    std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
-    const std::vector<double>& coords, const double& time) {
+void LimitingIsothermalWallNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
+  const int num_points, std::vector<double>& flux_jacobi,
+  std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
+  const std::vector<double>& coords, const double& time) {
   // flux_jacobi(ds1s2) = F(ds1) over U(s2)
   // flux_grad_jacobi(d1s1 s2d2) = F(d1s1) over gradU(d2s2)
-  int ind = 0;
+     
+  // Strong
   static std::vector<double> Ds(ns_, 0.0);
   static std::vector<double> Isx(ns_, 0.0);
   static std::vector<double> Isy(ns_, 0.0);
@@ -3556,57 +4543,70 @@ void IsothermalWallNS2DNeq2T::ComputeBdryFluxJacobi(
   static std::vector<double> d_new(ns_, 0.0);
   static std::vector<aDual> flux1(DS_, aDual(S_));
   static std::vector<aDual> flux2(DS_, aDual(DS_));
+  static double dim_Twall = Twall_ * T_ref_;
 
   const auto& species = mixture_->GetSpecies();
   const auto& hidx = mixture_->GetHeavyParticleIdx();
   const auto& eidx = mixture_->GetElectronIndex();
 
+  int ind = 0;
+  std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     {
       // ps
       ind = S_ * ipoint;
       std::vector<aDual> d(ns_, aDual(S_));
-      for (int i = 0; i < ns_; i++) d[i] = aDual(S_, owner_u[ind++], i);
+      for (int i = 0; i < ns_; i++) {
+        dim_d[i] = owner_u[ind] * rho_ref_;
+        d[i] = aDual(S_, owner_u[ind++], i);
+      }
       aDual u(S_, owner_u[ind++], ns_);
       aDual v(S_, owner_u[ind++], ns_ + 1);
-      const double& T_tr = owner_u[ind++];
-      const double& T_eev = owner_u[ind];
+      aDual T_tr(S_, owner_u[ind++], ns_ + 2);
+      aDual T_eev(S_, owner_u[ind], ns_ + 3);
+      const auto dim_T_tr = T_tr * T_ref_;
+      const auto dim_T_eev = T_eev * T_ref_;
 
       GET_SOLUTION_GRAD_PDS(, owner_div_u);
 
       // Convective flux
-      mixture_->SetDensity(&owner_u[S_ * ipoint]);
+      mixture_->SetDensity(&dim_d[0]);
       aDual mixture_d(S_, 0.0);
       for (int i = 0; i < ns_; i++) mixture_d = mixture_d + d[i];
       const auto mixture_d_inv = 1.0 / mixture_d;
 
-      aDual mixture_p(S_, 0.0);
-      mixture_p.f =
-          mixture_->GetPressureJacobian(T_tr, T_eev, &mixture_p.df[0]);
+      aDual mixture_p(S_);
+      mixture_p.f = mixture_->GetPressureJacobian(dim_T_tr.f, dim_T_eev.f,
+                                                  &mixture_p.df[0]);
       std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
       std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
+      mixture_p.f /= p_ref_;
+      for (int i = 0; i < ns_; i++) mixture_p.df[i] *= rho_ref_ / p_ref_;
+      mixture_p.df[ns_ + 2] *= T_ref_ / p_ref_;
+      mixture_p.df[ns_ + 3] *= T_ref_ / p_ref_;
 
       aDual sum(S_, 0.0);
       std::vector<aDual> Y(ns_, aDual(S_));
       for (int i = 0; i < ns_; i++) {
-        const double R = species[i]->GetSpecificGasConstant();
+        const double R = species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
         Y[i] = d[i] * mixture_d_inv;
         sum = sum + Y[i] * R * Twall_;
       }
       const auto mixture_d_wall = mixture_p / sum;
-      for (int i = 0; i < ns_; i++) d_new[i] = Y[i].f * mixture_d_wall.f;
+      for (int i = 0; i < ns_; i++) d_new[i] = Y[i].f * mixture_d_wall.f * rho_ref_;
       mixture_->SetDensity(&d_new[0]);
 
-      // Viscous flux // need check -> this assumes the dwall_ to be independent / check useless computations
-      // to solution variables
-      const auto mu = mixture_->GetViscosity(Twall_, Twall_);
-      const auto k_tr = mixture_->GetTransRotationConductivity(Twall_, Twall_);
+      // Viscous flux // need check -> this assumes the dwall_ to be independent
+      // / check useless computations to solution variables
+      const auto mu = mixture_->GetViscosity(dim_Twall, dim_Twall) / mu_ref_;
+      const auto k_tr =
+          mixture_->GetTransRotationConductivity(dim_Twall, dim_Twall) / k_ref_;
       const auto k_eev =
-          mixture_->GetElectronicVibrationConductivity(Twall_, Twall_);
+          mixture_->GetElectronicVibrationConductivity(dim_Twall, dim_Twall) / k_ref_;
 
-      const aDual txx(S_,c23_ * mu * (2.0 * ux - vy));
-      const aDual txy(S_,mu * (uy + vx));
-      const aDual tyy(S_,c23_ * mu * (2.0 * vy - ux));
+      const aDual txx(S_, c23_ * mu * (2.0 * ux - vy));
+      const aDual txy(S_, mu * (uy + vx));
+      const aDual tyy(S_, c23_ * mu * (2.0 * vy - ux));
 
       const aDual q_tr_x(S_, k_tr * Ttrx);
       const aDual q_tr_y(S_, k_tr * Ttry);
@@ -3615,15 +4615,15 @@ void IsothermalWallNS2DNeq2T::ComputeBdryFluxJacobi(
 
       ind = 0;
       for (int i = 0; i < ns_; i++) flux1[ind++] = aDual(S_, 0.0);
-      flux1[ind++] = mixture_p - txx;
-      flux1[ind++] = -txy;
-      flux1[ind++] = -q_tr_x - q_eev_x;
-      flux1[ind++] = -q_eev_x;
+      flux1[ind++] = mixture_p - scale_ * txx;
+      flux1[ind++] = -scale_ * txy;
+      flux1[ind++] = -scale_ * q_tr_x - scale_ * q_eev_x;
+      flux1[ind++] = -scale_ * q_eev_x;
       for (int i = 0; i < ns_; i++) flux1[ind++] = aDual(S_, 0.0);
-      flux1[ind++] = -txy;
-      flux1[ind++] = mixture_p - tyy;
-      flux1[ind++] = -q_tr_y - q_eev_y;
-      flux1[ind] = -q_eev_y;
+      flux1[ind++] = -scale_ * txy;
+      flux1[ind++] = mixture_p - scale_ * tyy;
+      flux1[ind++] = -scale_ * q_tr_y - scale_ * q_eev_y;
+      flux1[ind] = -scale_ * q_eev_y;
 
       // pdss
       ind = DSS_ * ipoint;
@@ -3651,25 +4651,25 @@ void IsothermalWallNS2DNeq2T::ComputeBdryFluxJacobi(
       const aDual Ttry(DS_, owner_div_u[ind++], 2 * (ns_ + 2) + 1);
       const aDual Teevy(DS_, owner_div_u[ind], 2 * (ns_ + 3) + 1);
 
-      mixture_->SetDensity(&owner_u[S_ * ipoint]);
-      const double mixture_d = mixture_->GetTotalDensity();
-      const double mixture_p = mixture_->GetPressure(T_tr, T_eev);
+      mixture_->SetDensity(&dim_d[0]);
+      const double mixture_p = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
 
       double sum = 0.0;
       const double* Y = mixture_->GetMassFraction();
       for (int i = 0; i < ns_; i++) {
-        const double R = species[i]->GetSpecificGasConstant();
+        const double R = species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
         sum = sum + Y[i] * R * Twall_;
       }
       const double d_wall = mixture_p / sum;
-      for (int i = 0; i < ns_; i++) d_new[i] = Y[i] * d_wall;
+      for (int i = 0; i < ns_; i++) d_new[i] = Y[i] * d_wall * rho_ref_;
       mixture_->SetDensity(&d_new[0]);
 
       // Viscous flux
-      const auto mu = mixture_->GetViscosity(Twall_, Twall_);
-      const auto k_tr = mixture_->GetTransRotationConductivity(Twall_, Twall_);
+      const auto mu = mixture_->GetViscosity(dim_Twall, dim_Twall) / mu_ref_;
+      const auto k_tr =
+          mixture_->GetTransRotationConductivity(dim_Twall, dim_Twall) / k_ref_;
       const auto k_eev =
-          mixture_->GetElectronicVibrationConductivity(Twall_, Twall_);
+          mixture_->GetElectronicVibrationConductivity(dim_Twall, dim_Twall) / k_ref_;
 
       const aDual txx = c23_ * mu * (2.0 * ux - vy);
       const aDual txy = mu * (uy + vx);
@@ -3682,15 +4682,15 @@ void IsothermalWallNS2DNeq2T::ComputeBdryFluxJacobi(
 
       ind = 0;
       for (int i = 0; i < ns_; i++) flux2[ind++] = aDual(DS_, 0.0);
-      flux2[ind++] = -txx;
-      flux2[ind++] = -txy;
-      flux2[ind++] = -q_tr_x - q_eev_x;
-      flux2[ind++] = -q_eev_x;
+      flux2[ind++] = -scale_ * txx;
+      flux2[ind++] = -scale_ * txy;
+      flux2[ind++] = -scale_ * q_tr_x - scale_ * q_eev_x;
+      flux2[ind++] = -scale_ * q_eev_x;
       for (int i = 0; i < ns_; i++) flux2[ind++] = aDual(DS_, 0.0);
-      flux2[ind++] = -txy;
-      flux2[ind++] = -tyy;
-      flux2[ind++] = -q_tr_y - q_eev_y;
-      flux2[ind] = -q_eev_y;
+      flux2[ind++] = -scale_ * txy;
+      flux2[ind++] = -scale_ * tyy;
+      flux2[ind++] = -scale_ * q_tr_y - scale_ * q_eev_y;
+      flux2[ind] = -scale_ * q_eev_y;
 
       // pdssd
       ind = DDSS_ * ipoint;
@@ -3702,26 +4702,31 @@ void IsothermalWallNS2DNeq2T::ComputeBdryFluxJacobi(
 }
 // Boundary Name = SupersonicInflow
 // Dependency: rho_1, ..., rho_ns, u, v, T_tr, T_eev
-SupersonicInflowBdryNS2DNeq2T::SupersonicInflowBdryNS2DNeq2T(
-    const int bdry_tag, EquationNS2DNeq2T* equation)
-    : BoundaryNS2DNeq2T(bdry_tag, equation) {
+SupersonicInflowBdryNS2DNeq2Tnondim::SupersonicInflowBdryNS2DNeq2Tnondim(
+    const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
+    : BoundaryNS2DNeq2Tnondim(bdry_tag, equation) {
   MASTER_MESSAGE("SupersonicInflow boundary (tag=" + std::to_string(bdry_tag) +
                  ")\n");
 
   auto& config = AVOCADO_CONFIG;
   d_.resize(ns_, 0.0);
-  for (int i = 0; i < ns_; i++)
-    d_[i] = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, i)));
-  u_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, ns_)));
-  v_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, ns_ + 1)));
-  T_tr_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, ns_ + 2)));
-  T_eev_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, ns_ + 3)));
-
+  std::vector<double> dim_d(ns_, 0.0);
+  for (int i = 0; i < ns_; i++) {
+    dim_d[i] = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, i)));
+    d_[i] = dim_d[i] / rho_ref_;
+  }
+  u_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, ns_))) / v_ref_;
+  v_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, ns_ + 1))) / v_ref_;
+  T_tr_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, ns_ + 2))) / T_ref_;
+  T_eev_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, ns_ + 3))) / T_ref_;
+  const double dim_T_tr = T_tr_ * T_ref_;
+  const double dim_T_eev = T_eev_ * T_ref_;
+    
   const auto& species = mixture_->GetSpecies();
-  mixture_->SetDensity(&d_[0]);
-  mixture_p_ = mixture_->GetPressure(T_tr_, T_eev_);
-  mixture_d_ = mixture_->GetTotalDensity();
-  const double beta = mixture_->GetBeta(T_tr_);
+  mixture_->SetDensity(&dim_d[0]);
+  mixture_p_ = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
+  mixture_d_ = mixture_->GetTotalDensity() / rho_ref_;
+  const double beta = mixture_->GetBeta(dim_T_tr);
   const double a = std::sqrt((1.0 + beta) * mixture_p_ / mixture_d_);
   const double Ma = std::sqrt(u_ * u_ + v_ * v_) / a;
   du_ = mixture_d_ * u_;
@@ -3729,8 +4734,8 @@ SupersonicInflowBdryNS2DNeq2T::SupersonicInflowBdryNS2DNeq2T(
   double de = 0.0;
   de_eev_ = 0.0;
   for (int i = 0; i < ns_; i++) {
-    const double e = species[i]->GetInternalEnergy(T_tr_, T_eev_);
-    const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev_);
+    const double e = species[i]->GetInternalEnergy(dim_T_tr, dim_T_eev) / e_ref_;
+    const double e_eev = species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
     de += d_[i] * e;
     de_eev_ += d_[i] * e_eev;
   }
@@ -3739,27 +4744,27 @@ SupersonicInflowBdryNS2DNeq2T::SupersonicInflowBdryNS2DNeq2T(
   MASTER_MESSAGE("SupersonicInflow (tag=" + std::to_string(bdry_tag) +
                  ")"
                  "\n\tdensity = " +
-                 std::to_string(mixture_d_) +
+                 std::to_string(mixture_d_ * rho_ref_) +
                  " kg/m3"
                  "\n\tx-velocity = " +
-                 std::to_string(u_) +
+                 std::to_string(u_ * v_ref_) +
                  " m/s"
                  "\n\ty-velocity = " +
-                 std::to_string(v_) +
+                 std::to_string(v_ * v_ref_) +
                  " m/s"
                  "\n\ttrans-rotational temperature = " +
-                 std::to_string(T_tr_) +
+                 std::to_string(dim_T_tr) +
                  " K"
                  "\n\telectron-electronic-vibration temperature = " +
-                 std::to_string(T_eev_) +
+                 std::to_string(dim_T_eev) +
                  " K"
                  "\n\tpressure = " +
-                 std::to_string(mixture_p_) +
+                 std::to_string(mixture_p_ * p_ref_) +
                  " Pa"
                  "\n\tMach number = " +
                  std::to_string(Ma) + "\n");
 }
-void SupersonicInflowBdryNS2DNeq2T::ComputeBdrySolution(
+void SupersonicInflowBdryNS2DNeq2Tnondim::ComputeBdrySolution(
     const int num_points, std::vector<double>& bdry_u,
     std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
     const std::vector<double>& owner_div_u, const std::vector<double>& normal,
@@ -3776,7 +4781,7 @@ void SupersonicInflowBdryNS2DNeq2T::ComputeBdrySolution(
   }
   // Don't touch bdry_div_u.
 }
-void SupersonicInflowBdryNS2DNeq2T::ComputeBdryFlux(
+void SupersonicInflowBdryNS2DNeq2Tnondim::ComputeBdryFlux(
     const int num_points, std::vector<double>& flux, FACE_INPUTS,
     const std::vector<double>& coords, const double& time) {
   int ind = 0;
@@ -3795,14 +4800,14 @@ void SupersonicInflowBdryNS2DNeq2T::ComputeBdryFlux(
     flux[ind] = de_eev_ * v_;
   }
 }
-void SupersonicInflowBdryNS2DNeq2T::ComputeBdrySolutionJacobi(
+void SupersonicInflowBdryNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
     const int num_points, double* bdry_u_jacobi,
     const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
     const std::vector<double>& normal, const std::vector<double>& coords,
     const double& time) {
   memset(bdry_u_jacobi, 0, num_points * SS_ * sizeof(double));
 }
-void SupersonicInflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
+void SupersonicInflowBdryNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
     const int num_points, std::vector<double>& flux_jacobi,
     std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
     const std::vector<double>& coords, const double& time) {
@@ -3811,13 +4816,13 @@ void SupersonicInflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
 }
 // Boundary = SupersonicOutflow
 // BdryInput() = -
-SupersonicOutflowBdryNS2DNeq2T::SupersonicOutflowBdryNS2DNeq2T(
-    const int bdry_tag, EquationNS2DNeq2T* equation)
-    : BoundaryNS2DNeq2T(bdry_tag, equation) {
+SupersonicOutflowBdryNS2DNeq2Tnondim::SupersonicOutflowBdryNS2DNeq2Tnondim(
+    const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
+    : BoundaryNS2DNeq2Tnondim(bdry_tag, equation) {
   MASTER_MESSAGE("SupersonicOutflow boundary (tag=" + std::to_string(bdry_tag) +
                  ")\n");
 }
-void SupersonicOutflowBdryNS2DNeq2T::ComputeBdrySolution(
+void SupersonicOutflowBdryNS2DNeq2Tnondim::ComputeBdrySolution(
     const int num_points, std::vector<double>& bdry_u,
     std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
     const std::vector<double>& owner_div_u, const std::vector<double>& normal,
@@ -3827,11 +4832,9 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdrySolution(
     // ps
     ind = S_ * ipoint;
     for (int i = 0; i < S_; i++) bdry_u[ind + i] = owner_u[ind + i];
-    ind = DS_ * ipoint;
-    for (int i = 0; i < DS_; i++) bdry_div_u[ind + i] = owner_div_u[ind + i];
   }
 }
-void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFlux(
+void SupersonicOutflowBdryNS2DNeq2Tnondim::ComputeBdryFlux(
     const int num_points, std::vector<double>& flux, FACE_INPUTS,
     const std::vector<double>& coords, const double& time) {
   static std::vector<double> Ds(ns_, 0.0);
@@ -3845,21 +4848,22 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFlux(
   const auto& eidx = mixture_->GetElectronIndex();
 
   int ind = 0;
+  std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_SOLUTION_PS(, owner_u);
     GET_SOLUTION_GRAD_PDS(, owner_div_u);
 
     // Convective flux
-    mixture_->SetDensity(d);
-    const double mixture_d = mixture_->GetTotalDensity();
-    const double mixture_p = mixture_->GetPressure(T_tr, T_eev);
-    const double beta = mixture_->GetBeta(T_tr);
+    mixture_->SetDensity(&dim_d[0]);
+    const double mixture_d = mixture_->GetTotalDensity() / rho_ref_;
+    const double mixture_p = mixture_->GetPressure(dim_T_tr, dim_T_eev) / p_ref_;
+    const double beta = mixture_->GetBeta(dim_T_tr);
     const double a = std::sqrt((1.0 + beta) * mixture_p / mixture_d);
     double de = 0.0;
     double de_eev = 0.0;
     for (int i = 0; i < ns_; i++) {
-      const double e = species[i]->GetInternalEnergy(T_tr, T_eev);
-      const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
+      const double e = species[i]->GetInternalEnergy(dim_T_tr, dim_T_eev) / e_ref_;
+      const double e_eev = species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
       de += d[i] * e;
       de_eev += d[i] * e_eev;
     }
@@ -3868,10 +4872,11 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFlux(
     const double dE = de + 0.5 * (du * u + dv * v);
 
     // Viscous flux
-    const double mu = mixture_->GetViscosity(T_tr, T_eev);
-    const double k_tr = mixture_->GetTransRotationConductivity(T_tr, T_eev);
+    const double mu = mixture_->GetViscosity(dim_T_tr, dim_T_eev) / mu_ref_;
+    const double k_tr =
+        mixture_->GetTransRotationConductivity(dim_T_tr, dim_T_eev) / k_ref_;
     const double k_eev =
-        mixture_->GetElectronicVibrationConductivity(T_tr, T_eev);
+        mixture_->GetElectronicVibrationConductivity(dim_T_tr, dim_T_eev) / k_ref_;
 
     const double* Y = mixture_->GetMassFraction();
     double mixture_dx = 0.0;
@@ -3881,8 +4886,9 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFlux(
       mixture_dy += dy[i];
     }
 
-    mixture_->GetDiffusivity(&Ds[0], T_tr, T_eev);
+    mixture_->GetDiffusivity(&Ds[0], dim_T_tr, dim_T_eev);
     for (int i = 0; i < ns_; i++) {
+      Ds[i] /= D_ref_;
       Isx[i] = -Ds[i] * (dx[i] - Y[i] * mixture_dx);
       Isy[i] = -Ds[i] * (dy[i] - Y[i] * mixture_dy);
     }
@@ -3922,8 +4928,8 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFlux(
     double Je_eev_x = 0.0;
     double Je_eev_y = 0.0;
     for (int i = 0; i < ns_; i++) {
-      const double h = species[i]->GetEnthalpy(T_tr, T_eev);
-      const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
+      const double h = species[i]->GetEnthalpy(dim_T_tr, dim_T_eev) / e_ref_;
+      const double e_eev = species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
       Jh_x += diffflux[i] * h;
       Je_eev_x += diffflux[i] * e_eev;
       Jh_y += diffflux[i + ns_] * h;
@@ -3949,7 +4955,7 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFlux(
     flux[ind] = de_eev * v - q_eev_y - Je_eev_y;
   }
 }
-void SupersonicOutflowBdryNS2DNeq2T::ComputeBdrySolutionJacobi(
+void SupersonicOutflowBdryNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
     const int num_points, double* bdry_u_jacobi,
     const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
     const std::vector<double>& normal, const std::vector<double>& coords,
@@ -3962,7 +4968,7 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdrySolutionJacobi(
     for (int i = 0; i < SS_; i += (S_ + 1)) bdry_u_jacobi[ind + i] = 1.0;
   }
 }
-void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
+void SupersonicOutflowBdryNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
     const int num_points, std::vector<double>& flux_jacobi,
     std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
     const std::vector<double>& coords, const double& time) {
@@ -3980,42 +4986,61 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
   const auto& eidx = mixture_->GetElectronIndex();
 
   // flux jacobi
+  std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     {
       // ps
       ind = S_ * ipoint;
       std::vector<aDual> d(ns_, aDual(S_));
-      for (int i = 0; i < ns_; i++) d[i] = aDual(S_, owner_u[ind++], i);
+      for (int i = 0; i < ns_; i++) {
+        dim_d[i] = owner_u[ind] * rho_ref_;
+        d[i] = aDual(S_, owner_u[ind++], i);
+      }
       aDual u(S_, owner_u[ind++], ns_);
       aDual v(S_, owner_u[ind++], ns_ + 1);
-      const double& T_tr = owner_u[ind++];
-      const double& T_eev = owner_u[ind++];
+      aDual T_tr(S_, owner_u[ind++], ns_ + 2);
+      aDual T_eev(S_, owner_u[ind], ns_ + 3);
+      const auto dim_T_tr = T_tr * T_ref_;
+      const auto dim_T_eev = T_eev * T_ref_;
 
       GET_SOLUTION_GRAD_PDS(, owner_div_u);
 
       // Convective flux
-      mixture_->SetDensity(&owner_u[S_ * ipoint]);
-      aDual mixture_d(S_, mixture_->GetTotalDensity());
+      mixture_->SetDensity(&dim_d[0]);
+      aDual mixture_d(S_, mixture_->GetTotalDensity() / rho_ref_);
       for (int i = 0; i < ns_; i++) mixture_d.df[i] = 1.0;
 
       aDual mixture_p(S_);
-      mixture_p.f =
-          mixture_->GetPressureJacobian(T_tr, T_eev, &mixture_p.df[0]);
+      mixture_p.f = mixture_->GetPressureJacobian(dim_T_tr.f, dim_T_eev.f,
+                                                  &mixture_p.df[0]);
       std::swap(mixture_p.df[ns_], mixture_p.df[ns_ + 2]);
       std::swap(mixture_p.df[ns_ + 1], mixture_p.df[ns_ + 3]);
+      mixture_p.f /= p_ref_;
+      for (int i = 0; i < ns_; i++) mixture_p.df[i] *= rho_ref_ / p_ref_;
+      mixture_p.df[ns_ + 2] *= T_ref_ / p_ref_;
+      mixture_p.df[ns_ + 3] *= T_ref_ / p_ref_;
 
       aDual beta(S_);
-      beta.f = mixture_->GetBetaJacobian(T_tr, &beta.df[0]);
+      beta.f = mixture_->GetBetaJacobian(dim_T_tr.f, &beta.df[0]);
+      for (int i = 0; i < ns_; i++) beta.df[i] *= rho_ref_;
+      beta.df[ns_ + 2] *= T_ref_;
+      beta.df[ns_ + 3] *= T_ref_;
 
       const auto a = std::sqrt((1.0 + beta) * mixture_p / mixture_d);
       aDual de(S_);
       aDual de_eev(S_);
       for (int i = 0; i < ns_; i++) {
-        const auto e = species[i]->GetInternalEnergy(T_tr, T_eev);
-        const auto e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
-        const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(T_tr);
+        const auto e =
+            species[i]->GetInternalEnergy(dim_T_tr.f, dim_T_eev.f) / e_ref_;
+        const auto e_eev =
+            species[i]->GetElectronicVibrationEnergy(dim_T_eev.f) / e_ref_;
+        const auto Cv_tr =
+            species[i]->GetTransRotationSpecificHeat(dim_T_tr.f) *
+                           T_ref_ / e_ref_;
         const auto Cv_eev =
-            species[i]->GetElectronicVibrationSpecificHeat(T_eev);
+            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev.f) *
+            T_ref_ /
+            e_ref_;
 
         de.f += d[i].f * e;
         de.df[i] = e;
@@ -4031,11 +5056,14 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
       const auto dE = de + 0.5 * (du * u + dv * v);
 
       // Viscous flux
-      const auto mu = mixture_->GetViscosity(T_tr, T_eev);
-      const auto k_tr = mixture_->GetTransRotationConductivity(T_tr, T_eev);
-      const auto k_eev =
-          mixture_->GetElectronicVibrationConductivity(T_tr, T_eev);
-      mixture_->GetDiffusivity(&Ds[0], T_tr, T_eev);
+      const double mu =
+          mixture_->GetViscosity(dim_T_tr.f, dim_T_eev.f) / mu_ref_;
+      const double k_tr =
+          mixture_->GetTransRotationConductivity(dim_T_tr.f, dim_T_eev.f) /
+          k_ref_;
+      const double k_eev = mixture_->GetElectronicVibrationConductivity(
+                               dim_T_tr.f, dim_T_eev.f) /
+          k_ref_;
 
       std::vector<aDual> Y(ns_, aDual(S_));
       for (int i = 0; i < ns_; i++) Y[i] = d[i] / mixture_d;
@@ -4049,7 +5077,9 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
 
       std::vector<aDual> Isx(ns_, aDual(S_));
       std::vector<aDual> Isy(ns_, aDual(S_));
+      mixture_->GetDiffusivity(&Ds[0], dim_T_tr.f, dim_T_eev.f);
       for (int i = 0; i < ns_; i++) {
+        Ds[i] /= D_ref_;
         Isx[i] = -Ds[i] * (dx[i] - Y[i] * mixture_dx);
         Isy[i] = -Ds[i] * (dy[i] - Y[i] * mixture_dy);
       }
@@ -4061,7 +5091,7 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
         Iy_sum = Iy_sum + Isy[idx];
       }
 
-      std::vector<aDual> diffflux(2 * ns_, aDual(S_));  // check cost
+      std::vector<aDual> diffflux(2 * ns_, aDual(S_));
       for (const int& idx : hidx) {
         diffflux[idx] = -Isx[idx] + Y[idx] * Ix_sum;
         diffflux[idx + ns_] = -Isy[idx] + Y[idx] * Iy_sum;
@@ -4089,12 +5119,18 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
       aDual Je_eev_x(S_);
       aDual Je_eev_y(S_);
       for (int i = 0; i < ns_; i++) {
-        const double h = species[i]->GetEnthalpy(T_tr, T_eev);
-        const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
-        const auto Cv_tr = species[i]->GetTransRotationSpecificHeat(T_tr);
+        const double h =
+            species[i]->GetEnthalpy(dim_T_tr.f, dim_T_eev.f) / e_ref_;
+        const double e_eev =
+            species[i]->GetElectronicVibrationEnergy(dim_T_eev.f) / e_ref_;
+        const auto Cv_tr =
+            species[i]->GetTransRotationSpecificHeat(dim_T_tr.f) *
+                           T_ref_ / e_ref_;
         const auto Cv_eev =
-            species[i]->GetElectronicVibrationSpecificHeat(T_eev);
-        const double R = species[i]->GetSpecificGasConstant();
+            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev.f) *
+            T_ref_ /
+            e_ref_;
+        const double R = species[i]->GetSpecificGasConstant() * T_ref_ / e_ref_;
 
         const auto Cp_tr = Cv_tr + (i == eidx) ? 0.0 : R;
         const auto Cp_eev = Cv_eev + (i == eidx) ? R : 0.0;
@@ -4157,12 +5193,13 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
       const aDual Teevy(DS_, owner_div_u[ind], 2 * (ns_ + 3) + 1);
 
       // Viscous flux
-      mixture_->SetDensity(&owner_u[S_ * ipoint]);
-      const auto mu = mixture_->GetViscosity(T_tr, T_eev);
-      const auto k_tr = mixture_->GetTransRotationConductivity(T_tr, T_eev);
-      const auto k_eev =
-          mixture_->GetElectronicVibrationConductivity(T_tr, T_eev);
-      mixture_->GetDiffusivity(&Ds[0], T_tr, T_eev);
+      mixture_->SetDensity(&dim_d[0]);
+      const double mu = mixture_->GetViscosity(dim_T_tr, dim_T_eev) / mu_ref_;
+      const double k_tr =
+          mixture_->GetTransRotationConductivity(dim_T_tr, dim_T_eev) / k_ref_;
+      const double k_eev =
+          mixture_->GetElectronicVibrationConductivity(dim_T_tr, dim_T_eev) /
+          k_ref_;
 
       const double* Y = mixture_->GetMassFraction();
       aDual mixture_dx(DS_);
@@ -4174,7 +5211,9 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
 
       std::vector<aDual> Isx(ns_, aDual(DS_));
       std::vector<aDual> Isy(ns_, aDual(DS_));
+      mixture_->GetDiffusivity(&Ds[0], dim_T_tr, dim_T_eev);
       for (int i = 0; i < ns_; i++) {
+        Ds[i] /= D_ref_;
         Isx[i] = -Ds[i] * (dx[i] - Y[i] * mixture_dx);
         Isy[i] = -Ds[i] * (dy[i] - Y[i] * mixture_dy);
       }
@@ -4186,8 +5225,7 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
         Iy_sum = Iy_sum + Isy[idx];
       }
 
-      std::vector<aDual> diffflux(2 * ns_, aDual(DS_));  // check cost
-
+      std::vector<aDual> diffflux(2 * ns_, aDual(DS_));
       for (const int& idx : hidx) {
         diffflux[idx] = -Isx[idx] + Y[idx] * Ix_sum;
         diffflux[idx + ns_] = -Isy[idx] + Y[idx] * Iy_sum;
@@ -4216,8 +5254,9 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
       aDual Je_eev_y(DS_);
 
       for (int i = 0; i < ns_; i++) {
-        const double h = species[i]->GetEnthalpy(T_tr, T_eev);
-        const double e_eev = species[i]->GetElectronicVibrationEnergy(T_eev);
+        const double h = species[i]->GetEnthalpy(dim_T_tr, dim_T_eev) / e_ref_;
+        const double e_eev =
+            species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
 
         Jh_x = Jh_x + diffflux[i] * h;
         Jh_y = Jh_y + diffflux[i + ns_] * h;
@@ -4252,70 +5291,70 @@ void SupersonicOutflowBdryNS2DNeq2T::ComputeBdryFluxJacobi(
 }
 // Boundary Name = CatalyticWall
 // BdryInput() = Twall, gamma_N, gamma_O, maxiter (optional)
-CatalyticWallNS2DNeq2T::CatalyticWallNS2DNeq2T(const int bdry_tag,
-                                               EquationNS2DNeq2T* equation)
-    : BoundaryNS2DNeq2T(bdry_tag, equation) {
+CatalyticWallNS2DNeq2Tnondim::CatalyticWallNS2DNeq2Tnondim(
+    const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
+    : BoundaryNS2DNeq2Tnondim(bdry_tag, equation) {
   MASTER_MESSAGE("CatalyticWall (tag=" + std::to_string(bdry_tag) + ")\n");
   ERROR_MESSAGE("CatalyticWall is not supported in this version!!!");
 }
-void CatalyticWallNS2DNeq2T::ComputeBdrySolution(
+void CatalyticWallNS2DNeq2Tnondim::ComputeBdrySolution(
     const int num_points, std::vector<double>& bdry_u,
     std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
     const std::vector<double>& owner_div_u, const std::vector<double>& normal,
     const std::vector<double>& coords, const double& time) {}
-void CatalyticWallNS2DNeq2T::ComputeBdryFlux(const int num_points,
-                                             std::vector<double>& flux,
-                                             FACE_INPUTS,
-                                             const std::vector<double>& coords,
-                                             const double& time) {}
-void CatalyticWallNS2DNeq2T::ComputeBdrySolutionJacobi(
+void CatalyticWallNS2DNeq2Tnondim::ComputeBdryFlux(
+    const int num_points, std::vector<double>& flux, FACE_INPUTS,
+    const std::vector<double>& coords, const double& time) {}
+void CatalyticWallNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
     const int num_points, double* bdry_u_jacobi,
     const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
     const std::vector<double>& normal, const std::vector<double>& coords,
     const double& time) {}
-void CatalyticWallNS2DNeq2T::ComputeBdryFluxJacobi(
+void CatalyticWallNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
     const int num_points, std::vector<double>& flux_jacobi,
     std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
     const std::vector<double>& coords, const double& time) {}
 // Boundary Name = SuperCatalyticWall
 // BdryInput() = Twall, rho_1, ..., rho_ns
-SuperCatalyticWallNS2DNeq2T::SuperCatalyticWallNS2DNeq2T(
-    const int bdry_tag, EquationNS2DNeq2T* equation)
-    : BoundaryNS2DNeq2T(bdry_tag, equation) {
+SuperCatalyticWallNS2DNeq2Tnondim::SuperCatalyticWallNS2DNeq2Tnondim(
+    const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
+    : BoundaryNS2DNeq2Tnondim(bdry_tag, equation) {
   MASTER_MESSAGE("SuperCatalyticWall (tag=" + std::to_string(bdry_tag) + ")\n");
   ERROR_MESSAGE("SuperCatalyticWall is not supported in this version!!!");
 }
-void SuperCatalyticWallNS2DNeq2T::ComputeBdrySolution(
+void SuperCatalyticWallNS2DNeq2Tnondim::ComputeBdrySolution(
     const int num_points, std::vector<double>& bdry_u,
     std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
     const std::vector<double>& owner_div_u, const std::vector<double>& normal,
     const std::vector<double>& coords, const double& time) {}
-void SuperCatalyticWallNS2DNeq2T::ComputeBdryFlux(
+void SuperCatalyticWallNS2DNeq2Tnondim::ComputeBdryFlux(
     const int num_points, std::vector<double>& flux, FACE_INPUTS,
     const std::vector<double>& coords, const double& time) {}
-void SuperCatalyticWallNS2DNeq2T::ComputeBdrySolutionJacobi(
+void SuperCatalyticWallNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
     const int num_points, double* bdry_u_jacobi,
     const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
     const std::vector<double>& normal, const std::vector<double>& coords,
     const double& time) {}
-void SuperCatalyticWallNS2DNeq2T::ComputeBdryFluxJacobi(
+void SuperCatalyticWallNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
     const int num_points, std::vector<double>& flux_jacobi,
     std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
     const std::vector<double>& coords, const double& time) {}
 // -------------------------------- Problem -------------------------------- //
-std::shared_ptr<ProblemNS2DNeq2T> ProblemNS2DNeq2T::GetProblem(
+std::shared_ptr<ProblemNS2DNeq2Tnondim> ProblemNS2DNeq2Tnondim::GetProblem(
     const std::string& name) {
   if (!name.compare("FreeStream"))
-    return std::make_shared<FreeStreamNS2DNeq2T>();
+    return std::make_shared<FreeStreamNS2DNeq2Tnondim>();
+  else if (!name.compare("DoubleSine"))
+    return std::make_shared<DoubleSineNS2DNeq2Tnondim>();
   else if (!name.compare("Test"))
-    return std::make_shared<TestNS2DNeq2T>();
+    return std::make_shared<TestNS2DNeq2Tnondim>();
   else
     ERROR_MESSAGE("Wrong problem (no-exist):" + name + "\n");
   return nullptr;
 }
 // Problem = FreeStream
 // ProblemInput = rho_1, ..., rho_ns, u, v, T_tr, T_eev
-FreeStreamNS2DNeq2T::FreeStreamNS2DNeq2T() {
+FreeStreamNS2DNeq2Tnondim::FreeStreamNS2DNeq2Tnondim() {
   MASTER_MESSAGE("FreeStream problem\n");
 
   auto& config = AVOCADO_CONFIG;
@@ -4340,25 +5379,94 @@ FreeStreamNS2DNeq2T::FreeStreamNS2DNeq2T() {
   str << "\t\telectron-electronic-vibration temperature = " << T_eev_ << " K\n";
   str << "\t\tpressure = " << mixture_p << " Pa\n";
   MASTER_MESSAGE(str.str());
+
+  for (int i = 0; i < ns_; i++) d_[i] /= rho_ref_;
+  u_ /= v_ref_;
+  v_ /= v_ref_;
+  T_tr_ /= T_ref_;
+  T_eev_ /= T_ref_;
 }
-void FreeStreamNS2DNeq2T::Problem(const int num_points,
-                             std::vector<double>& solutions,
-                             const std::vector<double>& coord,
-                             const double time) const {
+void FreeStreamNS2DNeq2Tnondim::Problem(const int num_points,
+                                        std::vector<double>& solutions,
+                                        const std::vector<double>& coord,
+                                        const double time) const {
   int ind = 0;
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
-    for (int i = 0; i < ns_; i++)
-      solutions[ind++] = d_[i];
+    for (int i = 0; i < ns_; i++) solutions[ind++] = d_[i];
     solutions[ind++] = u_;
     solutions[ind++] = v_;
     solutions[ind++] = T_tr_;
     solutions[ind++] = T_eev_;
   }
 }
+// Problem = DoubleSine
+// ProblemInput = rho_1, ..., rho_ns, u, v, T_tr, T_eev
+DoubleSineNS2DNeq2Tnondim::DoubleSineNS2DNeq2Tnondim()
+    : wave_number_({1.0, 1.0}) {
+  MASTER_MESSAGE("DoubleSine problem\n");
+
+  auto& config = AVOCADO_CONFIG;
+  d_.resize(ns_, 0.0);
+  for (int i = 0; i < ns_; i++)
+    d_[i] = std::stod(config->GetConfigValue(PROBLEM_INPUT_I(i)));
+  u_ = std::stod(config->GetConfigValue(PROBLEM_INPUT_I(ns_)));
+  v_ = std::stod(config->GetConfigValue(PROBLEM_INPUT_I(ns_ + 1)));
+  T_tr_ = std::stod(config->GetConfigValue(PROBLEM_INPUT_I(ns_ + 2)));
+  T_eev_ = std::stod(config->GetConfigValue(PROBLEM_INPUT_I(ns_ + 3)));
+
+  mixture_->SetDensity(&d_[0]);
+  const double mixture_d = mixture_->GetTotalDensity();
+  p_ = mixture_->GetPressure(T_tr_, T_eev_);
+
+  std::stringstream str;
+  str << "\tInput:\n";
+  str << "\t\tdensity = " << mixture_d << " kg/m3\n";
+  str << "\t\tx-velocity = " << u_ << " m/s\n";
+  str << "\t\ty-velocity = " << v_ << " m/s\n";
+  str << "\t\ttrans-rotational temperature = " << T_tr_ << " K\n";
+  str << "\t\telectron-electronic-vibration temperature = " << T_eev_ << " K\n";
+  str << "\t\tpressure = " << p_ << " Pa\n";
+  MASTER_MESSAGE(str.str());
+
+  for (int i = 0; i < ns_; i++) d_[i] /= rho_ref_;
+  u_ /= v_ref_;
+  v_ /= v_ref_;
+  T_tr_ /= T_ref_;
+  T_eev_ /= T_ref_;
+  p_ /= p_ref_;
+}
+void DoubleSineNS2DNeq2Tnondim::Problem(const int num_points,
+                                  std::vector<double>& solutions,
+                                  const std::vector<double>& coord,
+                                  const double time) const {
+  int ind = 0;
+
+  std::vector<double> values(S_);
+
+  const auto& species = mixture_->GetSpecies();
+  double R1 = species[0]->GetSpecificGasConstant();
+  values[1] = 1.0;
+  values[2] = 1.0;
+  values[3] = 1.0;
+
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    const double& x = coord[ipoint * D_];
+    const double& y = coord[ipoint * D_ + 1];
+
+    values[0] = 1.0 + 0.2 * std::sin(2.0 * M_PI * (x - values[1] * time)) *
+                          std::sin(2.0 * M_PI * (y - values[2] * time));
+    ind = S_ * ipoint;
+    solutions[ind] = values[0];
+    ind += ns_;
+    for (int idim = 0; idim < D_; idim++)
+      solutions[ind++] = values[idim + 1];
+    solutions[ind++] = v_ref_ * v_ref_ / values[0] / R1 / T_ref_;
+    solutions[ind] = values[3];
+  }
+}
 // Problem = Test
 // ProblemInput = rho_1, ..., rho_ns, u, v, T_tr, T_eev
-TestNS2DNeq2T::TestNS2DNeq2T()
-    : wave_number_({1.0, 1.0}) {
+TestNS2DNeq2Tnondim::TestNS2DNeq2Tnondim() : wave_number_({1.0, 1.0}) {
   MASTER_MESSAGE("Test problem: DoubleSine\n");
 
   auto& config = AVOCADO_CONFIG;
@@ -4372,7 +5480,7 @@ TestNS2DNeq2T::TestNS2DNeq2T()
 
   mixture_->SetDensity(&d_[0]);
   const double mixture_d = mixture_->GetTotalDensity();
-  const double mixture_p = mixture_->GetPressure(T_tr_, T_eev_);
+  p_ = mixture_->GetPressure(T_tr_, T_eev_);
 
   std::stringstream str;
   str << "\tInput:\n";
@@ -4381,35 +5489,42 @@ TestNS2DNeq2T::TestNS2DNeq2T()
   str << "\t\ty-velocity = " << v_ << " m/s\n";
   str << "\t\ttrans-rotational temperature = " << T_tr_ << " K\n";
   str << "\t\telectron-electronic-vibration temperature = " << T_eev_ << " K\n";
-  str << "\t\tpressure = " << mixture_p << " Pa\n";
+  str << "\t\tpressure = " << p_ << " Pa\n";
   MASTER_MESSAGE(str.str());
+
+  for (int i = 0; i < ns_; i++) d_[i] /= rho_ref_;
+  u_ /= v_ref_;
+  v_ /= v_ref_;
+  T_tr_ /= T_ref_;
+  T_eev_ /= T_ref_;
+  p_ /= p_ref_;
 }
-void TestNS2DNeq2T::Problem(const int num_points,
+void TestNS2DNeq2Tnondim::Problem(const int num_points,
                                   std::vector<double>& solutions,
                                   const std::vector<double>& coord,
                                   const double time) const {
   int ind = 0;
-  const double mixture_p = mixture_->GetPressure(T_tr_, T_eev_);
+
+  std::vector<double> values(S_);
+
+  const auto& species = mixture_->GetSpecies();
+  double R1 = species[0]->GetSpecificGasConstant();
+  values[1] = 1.0;
+  values[2] = 1.0;
+  values[3] = 1.0;
+
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     const double& x = coord[ipoint * D_];
     const double& y = coord[ipoint * D_ + 1];
 
-    
-    for (int i = 0; i < ns_; i++)
-      solutions[ind++] =
-          d_[i] * (1.0 + 0.2 *
-                             std::sin(2.0 * M_PI * wave_number_[0] *
-                                      x) *
-                             std::sin(2.0 * M_PI * wave_number_[1] *
-                                      y));
-    //if (x <= 0.5) for (int i = 0; i < ns_; i++) solutions[ind++] = d_[i];
-    //else for (int i = 0; i < ns_; i++) solutions[ind++] = 0.1*d_[i];
-    mixture_->SetDensity(&solutions[ipoint * S_]);
-    const double mixture_d = mixture_->GetTotalDensity();
-    solutions[ind++] = u_;
-    solutions[ind++] = v_;
-    solutions[ind++] = T_tr_ / mixture_d;
-    solutions[ind++] = T_eev_ / mixture_d;
+    values[0] = 1.0 + 0.2 * std::sin(2.0 * M_PI * (x - values[1] * time)) *
+                          std::sin(2.0 * M_PI * (y - values[2] * time));
+    ind = S_ * ipoint;
+    solutions[ind] = values[0];
+    ind += ns_;
+    for (int idim = 0; idim < D_; idim++) solutions[ind++] = values[idim + 1];
+    solutions[ind++] = v_ref_ * v_ref_ / values[0] / R1 / T_ref_;
+    solutions[ind] = values[3];
   }
 }
 }  // namespace deneb

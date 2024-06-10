@@ -25,12 +25,12 @@
       std::vector<double>&flux_owner_grad_jacobi, \
       std::vector<double>&flux_neighbor_grad_jacobi
 #define ASSIGN_FLUX(equation, fluxtype)                        \
-  compute_numflux_ = &##equation## ::ComputeNumFlux##fluxtype; \
-  compute_numflux_jacobi_ = &##equation## ::ComputeNumFluxJacobi##fluxtype
+  compute_numflux_ = & equation ::ComputeNumFlux##fluxtype; \
+  compute_numflux_jacobi_ = & equation ::ComputeNumFluxJacobi##fluxtype
 #define DEFINE_FLUX(fluxtype)                                        \
-  virtual void ComputeNumFlux##fluxtype##(                           \
+  virtual void ComputeNumFlux##fluxtype(                           \
       const int num_points, std::vector<double>& flux, FACE_INPUTS); \
-  virtual void ComputeNumFluxJacobi##fluxtype##(                     \
+  virtual void ComputeNumFluxJacobi##fluxtype(                     \
       const int num_points, FACE_JACOBI_OUTPUTS, FACE_INPUTS)
 #define BOUNDARY_METHODS                                                    \
   virtual void ComputeBdrySolution(                                         \
@@ -91,6 +91,7 @@ class Equation {
   inline const std::vector<std::string>& GetFaceVariableNames(void) const {
     return face_variable_names_;
   };
+  virtual inline bool GetAxisymmetricFlag(void) const { return false; }
 
   virtual void RegistBoundary(const std::vector<int>& bdry_tag) = 0;
   virtual void BuildData(void) = 0;
@@ -134,6 +135,7 @@ class Equation {
       const double* input_solution) const = 0;
   virtual const std::vector<double>& ComputePressureFixValues(
       const double* input_solution) = 0;
+  virtual void SolutionLimit(double* solution){};
 };
 extern std::shared_ptr<Equation> DENEB_EQUATION_NAME;
 }  // namespace deneb

@@ -16,11 +16,11 @@ class Mixture;
 }
 
 namespace deneb {
-class ProblemNS2DNeq2T;
-class BoundaryNS2DNeq2T;
+class ProblemNS2DNeq2Tnondim;
+class BoundaryNS2DNeq2Tnondim;
 
 // ------------------------------- Constants ------------------------------- //
-class ConstantsNS2DNeq2T {
+class ConstantsNS2DNeq2Tnondim {
  protected:
   static constexpr int D_ = 2;
   static int ns_;
@@ -31,11 +31,21 @@ class ConstantsNS2DNeq2T {
   static int DDSS_;
   static constexpr double c23_ = 2.0 / 3.0;
   static constexpr double radius_eps_ = 1.0E-8;
-  static int ax_;  // axi-symmetric -> need check
+  static int ax_;  // axi-symmetric
 
   static std::shared_ptr<Neq2T::Mixture> mixture_;
 
   static double T_eev_min_;
+
+  static double L_ref_;
+  static double rho_ref_;
+  static double T_ref_;
+  static double v_ref_;
+  static double mu_ref_;
+  static double k_ref_;
+  static double e_ref_;
+  static double p_ref_;
+  static double D_ref_;
 
   int max_num_points_;
   int max_num_cell_points_;
@@ -43,35 +53,39 @@ class ConstantsNS2DNeq2T {
   int max_num_bdry_points_;
 
  public:
-  ConstantsNS2DNeq2T();
-  virtual ~ConstantsNS2DNeq2T(){};
+  ConstantsNS2DNeq2Tnondim();
+  virtual ~ConstantsNS2DNeq2Tnondim(){};
 
   inline int GetMaxNumBdryPoints() const { return max_num_bdry_points_; };
 
  protected:
   // sol: rho_1, ..., rho_ns, u, v, T_tr, T_eev
+   void gradpri2gradsol(const int num_points, const double* sol_jacobi,
+     const double* grad_pri, double* grad_sol) const;
 };
 
 // ------------------------------- Equation -------------------------------- //
-class EquationNS2DNeq2T : public Equation, public ConstantsNS2DNeq2T {
+class EquationNS2DNeq2Tnondim : public Equation,
+                                public ConstantsNS2DNeq2Tnondim {
  private:
-  std::shared_ptr<ProblemNS2DNeq2T> problem_;
-  void (EquationNS2DNeq2T::*compute_numflux_)(const int num_points,
-                                              std::vector<double>& flux,
-                                              FACE_INPUTS);
-  void (EquationNS2DNeq2T::*compute_numflux_jacobi_)(const int num_points,
-                                                     FACE_JACOBI_OUTPUTS,
-                                                     FACE_INPUTS);
+  std::shared_ptr<ProblemNS2DNeq2Tnondim> problem_;
+  void (EquationNS2DNeq2Tnondim::* compute_numflux_)(const int num_points,
+    std::vector<double>& flux, FACE_INPUTS, const std::vector<double>& coords);
+  void (EquationNS2DNeq2Tnondim::* compute_numflux_jacobi_)(const int num_points,
+    FACE_JACOBI_OUTPUTS, FACE_INPUTS, const std::vector<double>& coords);
 
-  std::unordered_map<int, std::shared_ptr<BoundaryNS2DNeq2T>>
+  std::unordered_map<int, std::shared_ptr<BoundaryNS2DNeq2Tnondim>>
       boundary_registry_;
-  std::vector<std::shared_ptr<BoundaryNS2DNeq2T>> boundaries_;
+  std::vector<std::shared_ptr<BoundaryNS2DNeq2Tnondim>> boundaries_;
+
+  std::vector<int> wall_cells_;
 
  public:
-  EquationNS2DNeq2T(bool axis = false);
-  virtual ~EquationNS2DNeq2T();
+  EquationNS2DNeq2Tnondim(bool axis = false);
+  virtual ~EquationNS2DNeq2Tnondim();
 
   virtual inline bool GetMassMatrixFlag(void) const { return true; }
+  virtual inline bool GetAxisymmetricFlag(void) const { return static_cast<bool>(ax_); }
 
   virtual void RegistBoundary(const std::vector<int>& bdry_tag);
   virtual void BuildData(void);
@@ -120,7 +134,7 @@ class EquationNS2DNeq2T : public Equation, public ConstantsNS2DNeq2T {
     return std::vector<double>();
   };  // need check
 
-  void SolutionLimit(double* solution, double* delta){};  // necessary?
+  void SolutionLimit(double* solution) override;
 
   void ComputeComFlux(const int num_points, std::vector<double>& flux,
                       const int icell, const std::vector<double>& owner_u,
@@ -138,39 +152,43 @@ class EquationNS2DNeq2T : public Equation, public ConstantsNS2DNeq2T {
                            std::vector<double>& source_jacobi, const int icell,
                            const std::vector<double>& owner_u,
                            const std::vector<double>& owner_div_u);
-  void ComputeSolutionJacobi(const int num_points, std::vector<double>& jacobi,
+  void ComputeSolutionJacobi(const int num_points, std::vector<double>& jacobi, 
     const std::vector<double>& owner_u);
   inline void ComputeNumFlux(const int num_points, std::vector<double>& flux,
-                             FACE_INPUTS) {
+    FACE_INPUTS, const std::vector<double>& coords) {
     (this->*compute_numflux_)(num_points, flux, owner_cell, neighbor_cell,
-                              owner_u, owner_div_u, neighbor_u, neighbor_div_u,
-                              normal);
+      owner_u, owner_div_u, neighbor_u, neighbor_div_u,
+      normal, coords);
   };
   inline void ComputeNumFluxJacobi(const int num_points, FACE_JACOBI_OUTPUTS,
-                                   FACE_INPUTS) {
+    FACE_INPUTS, const std::vector<double>& coords) {
     (this->*compute_numflux_jacobi_)(
-        num_points, flux_owner_jacobi, flux_neighbor_jacobi,
-        flux_owner_grad_jacobi, flux_neighbor_grad_jacobi, owner_cell,
-        neighbor_cell, owner_u, owner_div_u, neighbor_u, neighbor_div_u,
-        normal);
+      num_points, flux_owner_jacobi, flux_neighbor_jacobi,
+      flux_owner_grad_jacobi, flux_neighbor_grad_jacobi, owner_cell,
+      neighbor_cell, owner_u, owner_div_u, neighbor_u, neighbor_div_u,
+      normal, coords);
   };
 
-  DEFINE_FLUX(LLF);
+  virtual void ComputeNumFluxLLF(
+    const int num_points, std::vector<double>& flux, FACE_INPUTS, const std::vector<double>& coords);
+  virtual void ComputeNumFluxJacobiLLF(
+    const int num_points, FACE_JACOBI_OUTPUTS, FACE_INPUTS, const std::vector<double>& coords);
 };
 
-class BoundaryNS2DNeq2T : public ConstantsNS2DNeq2T {
+class BoundaryNS2DNeq2Tnondim : public ConstantsNS2DNeq2Tnondim {
  public:
-  static std::shared_ptr<BoundaryNS2DNeq2T> GetBoundary(
-      const std::string& type, const int bdry_tag, EquationNS2DNeq2T* equation);
+  static std::shared_ptr<BoundaryNS2DNeq2Tnondim> GetBoundary(
+      const std::string& type, const int bdry_tag,
+      EquationNS2DNeq2Tnondim* equation);
 
  protected:
   int bdry_tag_;
-  EquationNS2DNeq2T* equation_;
+  EquationNS2DNeq2Tnondim* equation_;
 
  public:
-  BoundaryNS2DNeq2T(const int bdry_tag, EquationNS2DNeq2T* equation)
+  BoundaryNS2DNeq2Tnondim(const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
       : bdry_tag_(bdry_tag), equation_(equation){};
-  virtual ~BoundaryNS2DNeq2T(){};
+  virtual ~BoundaryNS2DNeq2Tnondim(){};
 
   virtual void ComputeBdrySolution(
       const int num_points, std::vector<double>& bdry_u,
@@ -194,42 +212,65 @@ class BoundaryNS2DNeq2T : public ConstantsNS2DNeq2T {
                                      const std::vector<double>& coords,
                                      const double& time) = 0;
 };
-// Boundary Name = SlilpWall
+// Boundary Name = SlipWall
 // Dependency: -
-class SlipWallNS2DNeq2T : public BoundaryNS2DNeq2T {
+class SlipWallNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
+ private:
+  double scale_;
+
  public:
-  SlipWallNS2DNeq2T(const int bdry_tag, EquationNS2DNeq2T* equation);
-  virtual ~SlipWallNS2DNeq2T(){};
+  SlipWallNS2DNeq2Tnondim(const int bdry_tag,
+                          EquationNS2DNeq2Tnondim* equation);
+  virtual ~SlipWallNS2DNeq2Tnondim(){};
 
   BOUNDARY_METHODS;
 };
 
-// Boundary Name = AdiabaticWall
+// Boundary Name = AxiSymmetry
 // Dependency: -
-class AdiabaticWallNS2DNeq2T : public BoundaryNS2DNeq2T {
- public:
-  AdiabaticWallNS2DNeq2T(const int bdry_tag, EquationNS2DNeq2T* equation);
-  virtual ~AdiabaticWallNS2DNeq2T(){};
+class AxiSymmetryNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
+
+public:
+  AxiSymmetryNS2DNeq2Tnondim(const int bdry_tag,
+    EquationNS2DNeq2Tnondim* equation);
+  virtual ~AxiSymmetryNS2DNeq2Tnondim() {};
 
   BOUNDARY_METHODS;
 };
 
 // Boundary Name = IsothermalWall
 // Dependency: Twall
-class IsothermalWallNS2DNeq2T : public BoundaryNS2DNeq2T {
+class IsothermalWallNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
  private:
+  double scale_;
   double Twall_;
 
  public:
-  IsothermalWallNS2DNeq2T(const int bdry_tag, EquationNS2DNeq2T* equation);
-  virtual ~IsothermalWallNS2DNeq2T(){};
+  IsothermalWallNS2DNeq2Tnondim(const int bdry_tag,
+                                EquationNS2DNeq2Tnondim* equation);
+  virtual ~IsothermalWallNS2DNeq2Tnondim(){};
+
+  BOUNDARY_METHODS;
+};
+
+// Boundary Name = LimitingIsothermalWall
+// Dependency: Twall
+class LimitingIsothermalWallNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
+private:
+  double scale_;
+  double Twall_;
+
+public:
+  LimitingIsothermalWallNS2DNeq2Tnondim(const int bdry_tag,
+    EquationNS2DNeq2Tnondim* equation);
+  virtual ~LimitingIsothermalWallNS2DNeq2Tnondim() {};
 
   BOUNDARY_METHODS;
 };
 
 // Boundary Name = SupersonicInflow
 // Dependency: rho_1, ..., rho_ns, u, v, T_tr, T_eev
-class SupersonicInflowBdryNS2DNeq2T : public BoundaryNS2DNeq2T {
+class SupersonicInflowBdryNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
  private:
   std::vector<double> d_;
   double mixture_d_;
@@ -244,27 +285,27 @@ class SupersonicInflowBdryNS2DNeq2T : public BoundaryNS2DNeq2T {
   double de_eev_;
 
  public:
-  SupersonicInflowBdryNS2DNeq2T(const int bdry_tag,
-                                EquationNS2DNeq2T* equation);
-  virtual ~SupersonicInflowBdryNS2DNeq2T(){};
+  SupersonicInflowBdryNS2DNeq2Tnondim(const int bdry_tag,
+                                      EquationNS2DNeq2Tnondim* equation);
+  virtual ~SupersonicInflowBdryNS2DNeq2Tnondim(){};
 
   BOUNDARY_METHODS;
 };
 
 // Boundary Name = SupersonicOutflow
 // Dependency: -
-class SupersonicOutflowBdryNS2DNeq2T : public BoundaryNS2DNeq2T {
+class SupersonicOutflowBdryNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
  public:
-  SupersonicOutflowBdryNS2DNeq2T(const int bdry_tag,
-                                 EquationNS2DNeq2T* equation);
-  virtual ~SupersonicOutflowBdryNS2DNeq2T(){};
+  SupersonicOutflowBdryNS2DNeq2Tnondim(const int bdry_tag,
+                                       EquationNS2DNeq2Tnondim* equation);
+  virtual ~SupersonicOutflowBdryNS2DNeq2Tnondim(){};
 
   BOUNDARY_METHODS;
 };
 
 // Boundary Name = CatalyticWall
 // Dependency: Twall, gamma_N, gamma_O, maxiter (optional)
-class CatalyticWallNS2DNeq2T : public BoundaryNS2DNeq2T {
+class CatalyticWallNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
  private:
   bool isN_;
   int idxN_;
@@ -285,33 +326,36 @@ class CatalyticWallNS2DNeq2T : public BoundaryNS2DNeq2T {
   std::vector<double> Ywall_;
 
  public:
-  CatalyticWallNS2DNeq2T(const int bdry_tag, EquationNS2DNeq2T* equation);
-  virtual ~CatalyticWallNS2DNeq2T(){};
+  CatalyticWallNS2DNeq2Tnondim(const int bdry_tag,
+                               EquationNS2DNeq2Tnondim* equation);
+  virtual ~CatalyticWallNS2DNeq2Tnondim(){};
 
   BOUNDARY_METHODS;
 };
 
 // Boundary Name = SuperCatalyticWall
 // Dependency: Twall, rho_1, ..., rho_ns
-class SuperCatalyticWallNS2DNeq2T : public BoundaryNS2DNeq2T {
+class SuperCatalyticWallNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
  private:
   double Twall_;
   std::vector<double> Ywall_;
 
  public:
-  SuperCatalyticWallNS2DNeq2T(const int bdry_tag, EquationNS2DNeq2T* equation);
-  virtual ~SuperCatalyticWallNS2DNeq2T(){};
+  SuperCatalyticWallNS2DNeq2Tnondim(const int bdry_tag,
+                                    EquationNS2DNeq2Tnondim* equation);
+  virtual ~SuperCatalyticWallNS2DNeq2Tnondim(){};
 
   BOUNDARY_METHODS;
 };
 
 // -------------------------------- Problem -------------------------------- //
-class ProblemNS2DNeq2T : public ConstantsNS2DNeq2T {
+class ProblemNS2DNeq2Tnondim : public ConstantsNS2DNeq2Tnondim {
  public:
-  static std::shared_ptr<ProblemNS2DNeq2T> GetProblem(const std::string& name);
+  static std::shared_ptr<ProblemNS2DNeq2Tnondim> GetProblem(
+      const std::string& name);
 
-  ProblemNS2DNeq2T() : ConstantsNS2DNeq2T(){};
-  virtual ~ProblemNS2DNeq2T(){};
+  ProblemNS2DNeq2Tnondim() : ConstantsNS2DNeq2Tnondim(){};
+  virtual ~ProblemNS2DNeq2Tnondim(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,
@@ -320,7 +364,7 @@ class ProblemNS2DNeq2T : public ConstantsNS2DNeq2T {
 
 // Problem = Freestream
 // ProblemInput = rho_1, ..., rho_ns, u, v, T_tr, T_eev
-class FreeStreamNS2DNeq2T : public ProblemNS2DNeq2T {
+class FreeStreamNS2DNeq2Tnondim : public ProblemNS2DNeq2Tnondim {
  private:
   std::vector<double> d_;
   double u_;
@@ -329,8 +373,28 @@ class FreeStreamNS2DNeq2T : public ProblemNS2DNeq2T {
   double T_eev_;
 
  public:
-  FreeStreamNS2DNeq2T();
-  virtual ~FreeStreamNS2DNeq2T(){};
+  FreeStreamNS2DNeq2Tnondim();
+  virtual ~FreeStreamNS2DNeq2Tnondim(){};
+
+  virtual void Problem(const int num_points, std::vector<double>& solutions,
+                       const std::vector<double>& coord,
+                       const double time = 0.0) const;
+};
+// Problem = DoubleSine
+// ProblemInput = rho_1, ..., rho_ns, u, v, T_tr, T_eev
+class DoubleSineNS2DNeq2Tnondim : public ProblemNS2DNeq2Tnondim {
+ private:
+  std::vector<double> d_;
+  double u_;
+  double v_;
+  double T_tr_;
+  double T_eev_;
+  double p_;
+  std::vector<double> wave_number_;
+
+ public:
+  DoubleSineNS2DNeq2Tnondim();
+  virtual ~DoubleSineNS2DNeq2Tnondim(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,
@@ -338,18 +402,19 @@ class FreeStreamNS2DNeq2T : public ProblemNS2DNeq2T {
 };
 // Problem = Test
 // ProblemInput = rho_1, ..., rho_ns, u, v, T_tr, T_eev
-class TestNS2DNeq2T : public ProblemNS2DNeq2T {
+class TestNS2DNeq2Tnondim : public ProblemNS2DNeq2Tnondim {
  private:
   std::vector<double> d_;
   double u_;
   double v_;
   double T_tr_;
   double T_eev_;
+  double p_;
   std::vector<double> wave_number_;
 
  public:
-  TestNS2DNeq2T();
-  virtual ~TestNS2DNeq2T(){};
+  TestNS2DNeq2Tnondim();
+  virtual ~TestNS2DNeq2Tnondim(){};
 
   virtual void Problem(const int num_points, std::vector<double>& solutions,
                        const std::vector<double>& coord,

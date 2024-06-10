@@ -71,6 +71,7 @@ class LaplacianP0 : public ArtificialViscosity {
   double kappa_;
   double S0_;
   double dLmax_;
+  std::vector<double> Se_;
 
   std::shared_ptr<avocado::Communicate> communicate_;
 
@@ -100,6 +101,131 @@ class LaplacianP0 : public ArtificialViscosity {
   double MaxArtificialViscosity(const double* solution,
                                 const double cell_volumes,
                                 const double cell_basis_value);
+};
+
+// ArtificialViscosity = Peclet, kappa
+class LaplacianP0All : public ArtificialViscosity {
+ protected:
+  int num_bases_m1_;  // num basis of P(n-1)
+  double Peclet_;
+  double kappa_;
+  double S0_;
+  double dLmax_;
+  std::vector<double> Se_;
+
+  std::shared_ptr<avocado::Communicate> communicate_;
+
+ public:
+  LaplacianP0All();
+  virtual ~LaplacianP0All(){};
+
+  virtual void BuildData(void);
+  virtual void ComputeArtificialViscosity(const double* solution,
+                                          const double dt);
+  virtual void ComputeArtificialViscosity(const double* solution,
+                                          const std::vector<double>& local_dt) {
+    ComputeArtificialViscosity(solution, 0.0);
+  };
+
+  virtual double GetArtificialViscosityValue(const int icell,
+                                             const int ipoint) const {
+    if (icell >= 0)
+      return artificial_viscosity_[icell];
+    else
+      return 0.0;
+  };
+
+ protected:
+  double SmoothnessIndicator(const double* solution);
+
+  double MaxArtificialViscosity(const double* solution,
+                                const double cell_volumes,
+                                const double cell_basis_value);
+};
+
+// ArtificialViscosity with polynomial shock fitting = Peclet, S0, sigma, poly_order, update_period, eps, minPts
+class LaplacianPolyShockFit : public ArtificialViscosity {
+  struct Point {
+    std::vector<double> coords;
+    bool visited;
+    int cluster;
+
+    Point(){};
+    Point(const std::vector<double>& _coords) : coords(_coords), visited(false), cluster(-1) {}
+  };
+
+ protected:
+  int num_bases_m1_;  // num basis of P(n-1)
+  int poly_order_;
+  int minPts_;
+  int max_newton_iter_;
+  int update_period_;
+  double newton_tol_;
+  double MaxAV_;
+  double S0_;
+  double dLmax_;
+  double eps_;
+  double sigma_;
+  std::vector<double> Se_;
+  std::vector<double> distance_from_shock_;
+  std::vector<double> shock_poly_coeff_;
+  std::vector<Point> suspects_;
+
+  std::shared_ptr<avocado::Communicate> communicate_;
+
+ public:
+  LaplacianPolyShockFit();
+  virtual ~LaplacianPolyShockFit(){};
+
+  virtual void BuildData(void);
+  virtual void ComputeArtificialViscosity(const double* solution,
+                                          const double dt);
+  virtual void ComputeArtificialViscosity(const double* solution,
+                                          const std::vector<double>& local_dt) {
+    ComputeArtificialViscosity(solution, 0.0);
+  };
+
+  virtual double GetArtificialViscosityValue(const int icell,
+                                             const int ipoint) const {
+    if (icell >= 0)
+      return artificial_viscosity_[icell];
+    else
+      return 0.0;
+  };
+
+ protected:
+  double SmoothnessIndicator(const double* solution);
+
+  double MaxArtificialViscosity(const double* solution,
+                                const double cell_volumes,
+                                const double cell_basis_value);
+
+  void SpotSuspect(const double* solution);
+
+  void DBSCAN();
+
+  void ShockPolyFit();
+
+  void ComputeDistanceFromShock();
+
+  double AVfunction(const double E0, const double distance);
+
+  double Distance(const Point& point1, const Point& point2);
+};
+
+// ArtificialViscosity with polynomial shock fitting and Wall = maxAV, S0, sigma, poly_order, update_period, eps, minPts, wallAV
+class LaplacianPolyShockFitWall : public LaplacianPolyShockFit {
+protected:
+  double wallAV_;
+  std::vector<int> wall_cells_;
+
+public:
+  LaplacianPolyShockFitWall();
+  virtual ~LaplacianPolyShockFitWall() {};
+
+  virtual void BuildData(void);
+  virtual void ComputeArtificialViscosity(const double* solution,
+    const double dt) override;
 };
 
 

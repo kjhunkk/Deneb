@@ -96,11 +96,13 @@ void TimeschemeImpEuler::Marching(void) {
     DENEB_EQUATION->SystemMatrixShift(solution, sysmat_, dt, t);
 
     const int sub_iteration = solver_.Solve(sysmat_, rhs_, delta_);
+    const int errorcode = solver_.GetErrorCode();
 
     // Check divergence
     VecNorm(delta_, NORM_2, &error_norm);
-    if ((!std::isnormal(error_norm)) || (sub_iteration == 0)) {
-      MASTER_MESSAGE("GMRES diverged!\n");
+    if ((!std::isnormal(error_norm)) || (errorcode != 0)) {    
+      MASTER_MESSAGE(
+          "GMRES diverged! PetscErrorCode : " + std::to_string(errorcode) + "\n");
       is_stop = true;
     } else {
       VecGetArray(delta_, &delta_ptr);
@@ -108,6 +110,7 @@ void TimeschemeImpEuler::Marching(void) {
       VecRestoreArray(delta_, &delta_ptr);
       DENEB_LIMITER->Limiting(&solution_[0]);    
       DENEB_PRESSUREFIX->Execute(&solution_[0]); 
+      DENEB_EQUATION->SolutionLimit(&solution_[0]);
 
       // Updating time and iteration
       current_time_ += time_step;
