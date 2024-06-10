@@ -23,3 +23,5 @@ configuration/*
 !configuration/SodTest_Limiter.dat
 !configuration/TaylorGreenVortex.dat
 !configuration/BluntBody.dat
+/Deneb
+/ExternalPackages
