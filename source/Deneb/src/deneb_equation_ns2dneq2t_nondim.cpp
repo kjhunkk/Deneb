@@ -3775,7 +3775,7 @@ void SlipWallNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
            &bdry_u_jacobi[ipoint * SS_], 1.0, &flux_jacobi[ipoint * DSS_], DS_,
            S_, S_);
 }
-// Boundary Name = SlilpWall
+// Boundary Name = AxiSymmetry
 // Dependency: -
 AxiSymmetryNS2DNeq2Tnondim::AxiSymmetryNS2DNeq2Tnondim(
   const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
@@ -3864,6 +3864,9 @@ void AxiSymmetryNS2DNeq2Tnondim::ComputeBdryFlux(const int num_points,
     flux[ind++] = dv_new * v_new + mixture_p;
     flux[ind++] = (dE + mixture_p) * v_new;
     flux[ind] = de_eev * v_new;
+
+    const double fy = static_cast<double>(ax_) * (coords[ipoint * D_ + 1] - 1.0) + 1.0;
+    cblas_dscal(DS_, fy, &flux[DS_ * ipoint], 1);
   }
 }
 void AxiSymmetryNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
@@ -4001,6 +4004,9 @@ void AxiSymmetryNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
       for (int ds = 0; ds < DS_; ds++)
         for (int istate = 0; istate < S_; istate++)
           flux_jacobi[ind++] = flux1[ds].df[istate];
+
+      const double fy = static_cast<double>(ax_) * (coords[ipoint * D_ + 1] - 1.0) + 1.0;
+      cblas_dscal(DSS_, fy, &flux_jacobi[DSS_ * ipoint], 1);
     }
   }
   memset(&flux_grad_jacobi[0], 0, num_points * DDSS_ * sizeof(double));
@@ -4489,6 +4495,9 @@ void LimitingIsothermalWallNS2DNeq2Tnondim::ComputeBdryFlux(
     flux[ind++] = mixture_p - scale_ * tyy;
     flux[ind++] = -scale_ * q_tr_y - scale_ * q_eev_y;
     flux[ind] = -scale_ * q_eev_y;
+
+    const double fy = static_cast<double>(ax_) * (coords[ipoint * D_ + 1] - 1.0) + 1.0;
+    cblas_dscal(DS_, fy, &flux[DS_ * ipoint], 1);
   }
 }
 void LimitingIsothermalWallNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
@@ -4552,6 +4561,7 @@ void LimitingIsothermalWallNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
   int ind = 0;
   std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    const double fy = static_cast<double>(ax_) * (coords[ipoint * D_ + 1] - 1.0) + 1.0;
     {
       // ps
       ind = S_ * ipoint;
@@ -4630,6 +4640,8 @@ void LimitingIsothermalWallNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
       for (int ds = 0; ds < DS_; ds++)
         for (int istate = 0; istate < S_; istate++)
           flux_jacobi[ind++] = flux1[ds].df[istate];
+
+      cblas_dscal(DSS_, fy, &flux_jacobi[DSS_ * ipoint], 1);
     }
     {
       GET_SOLUTION_PS(, owner_u);
@@ -4697,6 +4709,8 @@ void LimitingIsothermalWallNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
       for (int ds = 0; ds < DS_; ds++)
         for (int sd = 0; sd < DS_; sd++)
           flux_grad_jacobi[ind++] = flux2[ds].df[sd];
+
+      cblas_dscal(DDSS_, fy, &flux_grad_jacobi[DDSS_ * ipoint], 1);
     }
   }
 }
@@ -4798,6 +4812,9 @@ void SupersonicInflowBdryNS2DNeq2Tnondim::ComputeBdryFlux(
     flux[ind++] = dv_ * v_ + mixture_p_;
     flux[ind++] = (dE_ + mixture_p_) * v_;
     flux[ind] = de_eev_ * v_;
+
+    const double fy = static_cast<double>(ax_) * (coords[ipoint * D_ + 1] - 1.0) + 1.0;
+    cblas_dscal(DS_, fy, &flux[DS_ * ipoint], 1);
   }
 }
 void SupersonicInflowBdryNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
@@ -4953,6 +4970,9 @@ void SupersonicOutflowBdryNS2DNeq2Tnondim::ComputeBdryFlux(
     flux[ind++] =
         (dE + mixture_p) * v - txy * u - tyy * v - q_tr_y - q_eev_y - Jh_y;
     flux[ind] = de_eev * v - q_eev_y - Je_eev_y;
+
+    const double fy = static_cast<double>(ax_) * (coords[ipoint * D_ + 1] - 1.0) + 1.0;
+    cblas_dscal(DS_, fy, &flux[DS_ * ipoint], 1);
   }
 }
 void SupersonicOutflowBdryNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
@@ -4988,6 +5008,7 @@ void SupersonicOutflowBdryNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
   // flux jacobi
   std::vector<double> dim_d(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    const double fy = static_cast<double>(ax_) * (coords[ipoint * D_ + 1] - 1.0) + 1.0;
     {
       // ps
       ind = S_ * ipoint;
@@ -5172,6 +5193,8 @@ void SupersonicOutflowBdryNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
       for (int ds = 0; ds < DS_; ds++)
         for (int istate = 0; istate < S_; istate++)
           flux_jacobi[ind++] = flux1[ds].df[istate];
+
+      cblas_dscal(DSS_, fy, &flux_jacobi[DSS_ * ipoint], 1);
     }
     {
       GET_SOLUTION_PS(, owner_u);
@@ -5286,6 +5309,8 @@ void SupersonicOutflowBdryNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
       for (int ds = 0; ds < DS_; ds++)
         for (int sd = 0; sd < DS_; sd++)
           flux_grad_jacobi[ind++] = flux2[ds].df[sd];
+
+      cblas_dscal(DDSS_, fy, &flux_grad_jacobi[DDSS_ * ipoint], 1);
     }
   }
 }
