@@ -78,7 +78,8 @@ class EquationNS2DNeq2Tnondim : public Equation,
       boundary_registry_;
   std::vector<std::shared_ptr<BoundaryNS2DNeq2Tnondim>> boundaries_;
 
-  std::vector<int> wall_cells_;
+  std::vector<double> viscous_scaling_;
+  double viscous_scale_factor_;
 
  public:
   EquationNS2DNeq2Tnondim(bool axis = false);

@@ -39,7 +39,6 @@ Data::~Data(){};
 void Data::BuildData(void) {
   has_source_term_ = DENEB_EQUATION->GetSourceTerm();
   has_mass_matrix_ = DENEB_EQUATION->GetMassMatrixFlag();
-  ax_ = DENEB_EQUATION->GetAxisymmetricFlag();
 
   dimension_ = DENEB_EQUATION->GetDimension();
   std::shared_ptr<GridBuilder> grid = std::make_shared<GridBuilder>(dimension_);
@@ -319,14 +318,12 @@ void Data::BuildFaceQuadData(void) {
       quad_normal.resize(num_points * dimension_);
 
       for (int ipoint = 0; ipoint < num_points; ipoint++) {
-        const double fy = static_cast<double>(ax_) *
-          (quad_points[ipoint * dimension_ + 1] - 1.0) + 1.0;
         gemvAx(1.0, &cofactor[ipoint * dimension_ * dimension_], dimension_,
                normal, 1, 0.0, &quad_normal[ipoint * dimension_], 1, dimension_,
                dimension_);
         quad_weights[ipoint] =
             avocado::VecLength(dimension_, &quad_normal[ipoint * dimension_]) *
-            ref_weights[ipoint] * area_ratio * fy;
+            ref_weights[ipoint] * area_ratio;
       }
     }
 
@@ -454,14 +451,12 @@ void Data::BuildFaceQuadData(void) {
                               bdry_element->GetVolume();
     quad_normal.resize(num_points * dimension_);
     for (int ipoint = 0; ipoint < num_points; ipoint++) {
-      const double fy = static_cast<double>(ax_) *
-        (quad_points[ipoint * dimension_ + 1] - 1.0) + 1.0;
       gemvAx(1.0, &cofactor[ipoint * dimension_ * dimension_], dimension_,
              normal, 1, 0.0, &quad_normal[ipoint * dimension_], 1, dimension_,
              dimension_);
       quad_weights[ipoint] =
           avocado::VecLength(dimension_, &quad_normal[ipoint * dimension_]) *
-          ref_weights[ipoint] * area_ratio * fy;
+          ref_weights[ipoint] * area_ratio;
     }
 
     neighbor_quad_points = quad_points;
@@ -561,11 +556,7 @@ void Data::BuildCellData(const int icell) {
 
 
     for (int ipoint = 0; ipoint < num_points; ipoint++)
-    {
-      const double fy = static_cast<double>(ax_) *
-        (quad_points[ipoint * dimension_ + 1] - 1.0) + 1.0;
-      volume += quad_weights[ipoint] * fy;
-    }      
+      volume += quad_weights[ipoint];
   }
 
   cell_volumes_[icell] = volume;
@@ -679,9 +670,7 @@ void Data::BuildCellData(const int icell) {
 
     for (int ipoint = 0; ipoint < num_quad_points; ipoint++)
     {
-      const double fy = static_cast<double>(ax_) * 
-        (quad_points[ipoint * dimension_ + 1] - 1.0) + 1.0;
-      cblas_dscal(num_DRM_points, fy* quad_weights[ipoint],
+      cblas_dscal(num_DRM_points, quad_weights[ipoint],
         &nodal_basis_value[ipoint * num_DRM_points], 1);
     }
 
@@ -694,12 +683,6 @@ void Data::BuildCellData(const int icell) {
             &cell_coefficients_[icell][0], num_quad_points, num_DRM_points,
             num_bases_ * dimension_);
 
-    //if (ax_) {
-    //  for (int ipoint = 0; ipoint < num_DRM_points; ipoint++)
-    //    cblas_dscal(num_bases_ * dimension_, cell_points_[icell][ipoint * dimension_ + 1],
-    //      &cell_coefficients_[icell][ipoint * num_bases_ * dimension_], 1);
-    //}
-
     if (has_source_term_ || has_mass_matrix_) {
       std::vector<double> basis_value(num_quad_points * num_bases_);
       cell_basis_[icell]->GetBasis(num_quad_points, &quad_points[0],
@@ -708,13 +691,6 @@ void Data::BuildCellData(const int icell) {
       gemmATB(1.0, &nodal_basis_value[0], &basis_value[0], 0.0,
               &cell_source_coefficients_[icell][0], num_quad_points,
               num_DRM_points, num_bases_);
-
-      //if (ax_) {
-      //  for (int ipoint = 0; ipoint < num_DRM_points; ipoint++)
-      //    cblas_dscal(num_bases_,
-      //      cell_points_[icell][ipoint * dimension_ + 1],
-      //      &cell_source_coefficients_[icell][ipoint * num_bases_], 1);
-      //}
 
       if (has_mass_matrix_) {
         std::vector<double> basis_prod_value(num_quad_points * num_bases_ *
@@ -730,13 +706,6 @@ void Data::BuildCellData(const int icell) {
         gemmATB(1.0, &nodal_basis_value[0], &basis_prod_value[0], 0.0,
                 &cell_mass_coefficients_[icell][0], num_quad_points,
                 num_DRM_points, num_bases_ * num_bases_);
-
-        //if (ax_) {
-        //  for (int ipoint = 0; ipoint < num_DRM_points; ipoint++)
-        //    cblas_dscal(num_bases_ * num_bases_,
-        //      cell_points_[icell][ipoint * dimension_ + 1],
-        //      &cell_mass_coefficients_[icell][ipoint * num_bases_ * num_bases_], 1);
-        //}
       }
     }
   }
@@ -906,9 +875,7 @@ void Data::BuildFaceData(const int iface) {
 
     for (int ipoint = 0; ipoint < num_quad_points; ipoint++)
     {
-      const double fy = static_cast<double>(ax_) *
-        (quad_points[ipoint * dimension_ + 1] - 1.0) + 1.0;
-      cblas_dscal(num_DRM_points, fy * quad_weights[ipoint],
+      cblas_dscal(num_DRM_points, quad_weights[ipoint],
         &nodal_basis_value[ipoint * num_DRM_points], 1);
     }
 
@@ -934,14 +901,6 @@ void Data::BuildFaceData(const int iface) {
                           &face_neighbor_coefficients_[iface][0], dimension_,
                           num_DRM_points, num_quad_points, num_bases_, 1.0,
                           0.0);
-    //if (ax_) {
-    //  for (int ipoint = 0; ipoint < num_DRM_points; ipoint++)
-    //    cblas_dscal(num_bases_ * dimension_, face_points_[iface][ipoint * dimension_ + 1],
-    //      &face_owner_coefficients_[iface][ipoint * num_bases_ * dimension_], 1);
-    //  for (int ipoint = 0; ipoint < num_DRM_points; ipoint++)
-    //    cblas_dscal(num_bases_ * dimension_, face_points_[iface][ipoint * dimension_ + 1],
-    //      &face_neighbor_coefficients_[iface][ipoint * num_bases_ * dimension_], 1);
-    //}
   }
 }
 void Data::BuildBdryData(const int ibdry) {
@@ -1098,9 +1057,7 @@ void Data::BuildBdryData(const int ibdry) {
 
     for (int ipoint = 0; ipoint < num_quad_points; ipoint++)
     {
-      const double fy = static_cast<double>(ax_) *
-        (quad_points[ipoint * dimension_ + 1] - 1.0) + 1.0;
-      cblas_dscal(num_DRM_points, fy * quad_weights[ipoint],
+      cblas_dscal(num_DRM_points, quad_weights[ipoint],
         &nodal_basis_value[ipoint * num_DRM_points], 1);
     }
 
@@ -1118,12 +1075,6 @@ void Data::BuildBdryData(const int ibdry) {
     avocado::Kernel1::f72(
         &temp[0], &owner_basis_value[0], &bdry_owner_coefficients_[ibdry][0],
         dimension_, num_DRM_points, num_quad_points, num_bases_, 1.0, 0.0);
-
-    //if (ax_) {
-    //  for (int ipoint = 0; ipoint < num_DRM_points; ipoint++)
-    //    cblas_dscal(num_bases_ * dimension_, bdry_points_[ibdry][ipoint * dimension_ + 1],
-    //      &bdry_owner_coefficients_[ibdry][ipoint * num_bases_ * dimension_], 1);
-    //}
   }
 }
 void Data::BuildPeribdryData(const int ibdry) {
@@ -1340,9 +1291,7 @@ void Data::BuildPeribdryData(const int ibdry) {
 
     for (int ipoint = 0; ipoint < num_quad_points; ipoint++)
     {
-      const double fy = static_cast<double>(ax_) *
-        (quad_points[ipoint * dimension_ + 1] - 1.0) + 1.0;
-      cblas_dscal(num_DRM_points, fy * quad_weights[ipoint],
+      cblas_dscal(num_DRM_points, quad_weights[ipoint],
         &nodal_basis_value[ipoint * num_DRM_points], 1);
     }
 
@@ -1369,15 +1318,6 @@ void Data::BuildPeribdryData(const int ibdry) {
                           &peribdry_neighbor_coefficients_[ibdry][0],
                           dimension_, num_DRM_points, num_quad_points,
                           num_bases_, 1.0, 0.0);
-
-    //if (ax_) {
-    //  for (int ipoint = 0; ipoint < num_DRM_points; ipoint++)
-    //    cblas_dscal(num_bases_ * dimension_, bdry_points_[ibdry][ipoint * dimension_ + 1],
-    //      &peribdry_owner_coefficients_[ibdry][ipoint* num_bases_ * dimension_], 1);
-    //  for (int ipoint = 0; ipoint < num_DRM_points; ipoint++)
-    //    cblas_dscal(num_bases_ * dimension_, bdry_points_[ibdry][ipoint * dimension_ + 1],
-    //      &peribdry_neighbor_coefficients_[ibdry][ipoint * num_bases_ * dimension_], 1);
-    //}
   }
 }
 void Data::CombinePeribdryToFaceData(void) {

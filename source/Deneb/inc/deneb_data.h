@@ -30,7 +30,6 @@ class Data {
   double lc_; // characteristic length
   bool has_source_term_;
   bool has_mass_matrix_;
-  bool ax_;
 
   // node
   int num_global_nodes_;
