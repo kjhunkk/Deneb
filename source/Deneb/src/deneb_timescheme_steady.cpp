@@ -247,5 +247,12 @@ void TimeschemeSteady::Marching(void) {
   DENEB_CONTOUR->CellSolution(
       dir + RETURN_POST_DIR + "Iter" + std::to_string(iteration_) + ".plt",
       &solution_[0], iteration_);
+  SaveLoad::SaveData data;
+  data.iteration_ = iteration_;
+  data.strandid_ = DENEB_CONTOUR->GetStrandID();
+  data.time_ = current_time_;
+  DENEB_SAVELOAD->Save(
+      dir + RETURN_SAVE_DIR + "Iter" + std::to_string(iteration_) + ".SAVE",
+      &solution_[0], data);
 }
 }  // namespace deneb
