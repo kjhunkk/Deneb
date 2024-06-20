@@ -139,6 +139,10 @@ void TimeschemeSDIRK::Marching(void) {
     // Updating solution
     DENEB_EQUATION->PreProcess(solution);
 
+    VecGetArray(stage_solution_, &stage_solution_ptr);
+    cblas_dcopy(length_, solution, 1, stage_solution_ptr, 1);
+    VecRestoreArray(stage_solution_, &stage_solution_ptr);
+
     // Stage 1~
     DENEB_EQUATION->ComputeSystemMatrix(solution, sysmat_,
                                         t + coeff_c_[0] * dt);
