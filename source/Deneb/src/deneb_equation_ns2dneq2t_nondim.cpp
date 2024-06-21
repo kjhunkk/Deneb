@@ -2116,8 +2116,7 @@ void EquationNS2DNeq2Tnondim::ComputeSource(
     ind = S_ * ipoint;
     mixture_->SetDensity(&dim_d[0]);
     const double* rate = mixture_->GetSpeciesReactionRate(dim_T_tr, dim_T_eev);
-    for (int i = 0; i < ns_; i++) source[ind++] = 0.0;
-    //rate[i] * L_ref_* inv_rhov* fy; for debug
+    for (int i = 0; i < ns_; i++) source[ind++] = rate[i] * L_ref_* inv_rhov* fy;
 
     const double ct = mixture_->GetReactionTransferRate(dim_T_tr, dim_T_eev);
     const double vt = mixture_->GetVTTransferRate(dim_T_tr, dim_T_eev);
