@@ -160,6 +160,7 @@ class LaplacianPolyShockFit : public ArtificialViscosity {
   int minPts_;
   int max_newton_iter_;
   int update_period_;
+  int max_cluster_;
   double newton_tol_;
   double MaxAV_;
   double S0_;

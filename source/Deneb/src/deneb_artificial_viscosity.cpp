@@ -543,6 +543,13 @@ void LaplacianPolyShockFit::DBSCAN() {
       clusterId++;
     }
   }
+
+  std::vector<int> num_cluster(clusterId + 1, 0);
+  for (Point& p : suspects_) {
+    if (p.cluster != -1) num_cluster[p.cluster]++;
+  }
+  max_cluster_ = std::max_element(num_cluster.begin(), num_cluster.end()) -
+                num_cluster.begin();
 }
 
 void LaplacianPolyShockFit::ShockPolyFit() {
@@ -554,8 +561,7 @@ void LaplacianPolyShockFit::ShockPolyFit() {
 
   std::vector<double> xFilteredData, yFilteredData;
   for (const Point& p : suspects_) {
-    //if (p.cluster == 0) {
-    if (p.cluster >= 0) {
+    if (p.cluster == max_cluster_) {
       // Reverse
       yFilteredData.emplace_back(p.coords[0]);
       xFilteredData.emplace_back(p.coords[1]);
