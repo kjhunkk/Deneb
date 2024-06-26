@@ -40,6 +40,10 @@ class ArtificialViscosity {
 
   virtual double GetArtificialViscosityValue(const int icell,
                                              const int ipoint) const = 0;
+
+  virtual double GetAuxiliaryValue(const int icell, const int ipoint) const {
+    return 0;
+  };
   const std::vector<double>& GetArtificialViscosity() const {
     return artificial_viscosity_;
   };
@@ -95,6 +99,13 @@ class LaplacianP0 : public ArtificialViscosity {
       return 0.0;
   };
 
+  virtual double GetAuxiliaryValue(const int icell, const int ipoint) const override {
+    if (icell >= 0)
+      return Se_[icell];
+    else
+      return 0.0;
+  };
+
  protected:
   double SmoothnessIndicator(const double* solution);
 
@@ -131,6 +142,14 @@ class LaplacianP0All : public ArtificialViscosity {
                                              const int ipoint) const {
     if (icell >= 0)
       return artificial_viscosity_[icell];
+    else
+      return 0.0;
+  };
+
+  virtual double GetAuxiliaryValue(const int icell,
+                                   const int ipoint) const override {
+    if (icell >= 0)
+      return Se_[icell];
     else
       return 0.0;
   };
@@ -190,6 +209,14 @@ class LaplacianPolyShockFit : public ArtificialViscosity {
                                              const int ipoint) const {
     if (icell >= 0)
       return artificial_viscosity_[icell];
+    else
+      return 0.0;
+  };
+
+  virtual double GetAuxiliaryValue(const int icell,
+                                   const int ipoint) const override {
+    if (icell >= 0)
+      return Se_[icell];
     else
       return 0.0;
   };

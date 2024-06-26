@@ -174,6 +174,9 @@ class EquationNS2DNeq2Tnondim : public Equation,
     const int num_points, std::vector<double>& flux, FACE_INPUTS, const std::vector<double>& coords);
   virtual void ComputeNumFluxJacobiLLF(
     const int num_points, FACE_JACOBI_OUTPUTS, FACE_INPUTS, const std::vector<double>& coords);
+
+  virtual void GetPointPostSolution(
+      const double* solution, std::vector<double>& point_solution) override;
 };
 
 class BoundaryNS2DNeq2Tnondim : public ConstantsNS2DNeq2Tnondim {
@@ -300,6 +303,20 @@ class SupersonicOutflowBdryNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
   SupersonicOutflowBdryNS2DNeq2Tnondim(const int bdry_tag,
                                        EquationNS2DNeq2Tnondim* equation);
   virtual ~SupersonicOutflowBdryNS2DNeq2Tnondim(){};
+
+  BOUNDARY_METHODS;
+};
+
+// Boundary Name = BackPressure
+// Dependency: -
+class BackPressureBdryNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
+ private:
+  double p_over_pinf_;
+
+ public:
+  BackPressureBdryNS2DNeq2Tnondim(const int bdry_tag,
+                                  EquationNS2DNeq2Tnondim* equation);
+  virtual ~BackPressureBdryNS2DNeq2Tnondim(){};
 
   BOUNDARY_METHODS;
 };

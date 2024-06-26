@@ -245,16 +245,6 @@ void EquationNS2DNeq2Tnondim::BuildData(void) {
   const auto& bdry_tag = DENEB_DATA->GetBdryTag();
   const int& num_total_cells = DENEB_DATA->GetNumTotalCells();
   viscous_scaling_.resize(num_total_cells, 0.0);
-  // for debug
-  //viscous_scale_factor_ = std::stod(config->GetConfigValue("ViscousScaling"));
-  //for (int ibdry = 0; ibdry < num_bdries; ibdry++) {
-  //  const int owner_cell = bdry_owner_cell[ibdry];
-  //  const std::string& bdry_type =
-  //      config->GetConfigValue(BDRY_TYPE(bdry_tag[ibdry]));
-  //  if (bdry_type.find("Wall") != std::string::npos)
-  //    if (bdry_type.find("SlipWall") == std::string::npos)
-  //      viscous_scaling_[owner_cell] = viscous_scale_factor_;
-  //}
 
   std::vector<std::string> variable_names;
   for (auto& sp : mixture_->GetSpecies())
@@ -285,6 +275,7 @@ void EquationNS2DNeq2Tnondim::BuildData(void) {
   face_variable_names_.push_back("dTeev/dn");
 
   cell_variable_names_.push_back("AV");  // for debug
+  cell_variable_names_.push_back("Se");  // for debug
 
   SYNCRO();
   {
@@ -306,9 +297,12 @@ void EquationNS2DNeq2Tnondim::GetCellPostSolution(
     std::vector<double>& post_solution) {
   int ind = 0;
   double arvis = 0.0;
-  if (icell >= 0)
+  double Se = 0.0;
+  if (icell >= 0) {
     arvis = DENEB_ARTIFICIAL_VISCOSITY->GetArtificialViscosityValue(
         icell, 0);  // for debug
+    Se = DENEB_ARTIFICIAL_VISCOSITY->GetAuxiliaryValue(icell, 0); // for debug
+  } 
 
   std::vector<double> rho(ns_, 0.0);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
@@ -371,6 +365,7 @@ void EquationNS2DNeq2Tnondim::GetCellPostSolution(
     post_solution[ind++] = ct + vt + et;
 
     post_solution[ind++] = arvis;  // for debug
+    post_solution[ind++] = Se;  // for debug
   }
 }
 void EquationNS2DNeq2Tnondim::GetFacePostSolution(
@@ -3617,7 +3612,42 @@ void EquationNS2DNeq2Tnondim::ComputeNumFluxJacobiLLF(
     }
   }
 }
+void EquationNS2DNeq2Tnondim::GetPointPostSolution(const double* solution, std::vector<double>& point_solution)
+{
+  // cell sweep
+  static const int& num_bases = DENEB_DATA->GetNumBases();
+  static const auto& num_cell_points = DENEB_DATA->GetNumCellPoints();
+  static const auto& cell_basis_value = DENEB_DATA->GetCellBasisValue();
+  static const auto& cell_basis_grad_value =
+      DENEB_DATA->GetCellBasisGradValue();
+  static const auto& cell_coefficients = DENEB_DATA->GetCellCoefficients();
+  static const auto& cell_source_coefficients =
+      DENEB_DATA->GetCellSourceCoefficients();
+  static std::vector<double> rho(ns_, 0.0);
 
+  const int& num_points = num_cell_points[0];
+  static std::vector<double> owner_solution(S_ * max_num_points_);
+
+  avocado::Kernel0::f4(&solution[0], &cell_basis_value[0][0],
+                        &owner_solution[0], S_, num_bases, num_points, 1.0,
+                        0.0);
+
+  point_solution.clear();
+  const double* sol = &owner_solution[0];
+  for (int i = 0; i < ns_; i++) {
+    rho[i] = sol[i] * rho_ref_;
+    point_solution.push_back(rho[i]);
+  }
+  const double T_tr = sol[ns_ + 2] * T_ref_;
+  const double T_eev = sol[ns_ + 3] * T_ref_;
+  const auto& species = mixture_->GetSpecies();
+  mixture_->SetDensity(&rho[0]);
+  const double d = mixture_->GetTotalDensity();
+
+  point_solution.push_back(T_tr);
+  point_solution.push_back(T_eev);
+  point_solution.push_back(d);
+}
 // ------------------------------- Boundary -------------------------------- //
 std::shared_ptr<BoundaryNS2DNeq2Tnondim> BoundaryNS2DNeq2Tnondim::GetBoundary(
     const std::string& type, const int bdry_tag,
@@ -3636,6 +3666,9 @@ std::shared_ptr<BoundaryNS2DNeq2Tnondim> BoundaryNS2DNeq2Tnondim::GetBoundary(
                                                                  equation);
   else if (!type.compare("SupersonicOutflow"))
     return std::make_shared<SupersonicOutflowBdryNS2DNeq2Tnondim>(bdry_tag,
+                                                                  equation);
+  else if (!type.compare("BackPressure"))
+    return std::make_shared<BackPressureBdryNS2DNeq2Tnondim>(bdry_tag,
                                                                   equation);
   else if (!type.compare("CatalyticWall"))
     return std::make_shared<CatalyticWallNS2DNeq2Tnondim>(bdry_tag, equation);
@@ -5474,6 +5507,151 @@ void SupersonicOutflowBdryNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
       cblas_dscal(DDSS_, fy, &flux_grad_jacobi[DDSS_ * ipoint], 1);
     }
   }
+}
+// Boundary = BackPressure
+// BdryInput() = P/Pinf
+BackPressureBdryNS2DNeq2Tnondim::BackPressureBdryNS2DNeq2Tnondim(
+    const int bdry_tag, EquationNS2DNeq2Tnondim* equation)
+    : BoundaryNS2DNeq2Tnondim(bdry_tag, equation) {
+  auto& config = AVOCADO_CONFIG;
+  p_over_pinf_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 0)));
+
+  MASTER_MESSAGE("BackPressure boundary (tag=" + std::to_string(bdry_tag) +
+                 ")\n\tp/pinf = " + std::to_string(p_over_pinf_) + "\n");
+}
+void BackPressureBdryNS2DNeq2Tnondim::ComputeBdrySolution(
+    const int num_points, std::vector<double>& bdry_u,
+    std::vector<double>& bdry_div_u, const std::vector<double>& owner_u,
+    const std::vector<double>& owner_div_u, const std::vector<double>& normal,
+    const std::vector<double>& coords, const double& time) {
+
+  std::vector<double> dim_d_o(ns_);
+
+  int ind = 0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    GET_SOLUTION_PS(_o, owner_u);
+
+    mixture_->SetDensity(&dim_d_o[0]);
+    const double mixture_d_o = mixture_->GetTotalDensity() / rho_ref_;
+    const double mixture_p_o =
+        mixture_->GetPressure(dim_T_tr_o, dim_T_eev_o) / p_ref_;
+    const double beta_o = mixture_->GetBeta(dim_T_tr_o);
+    const double a_o = std::sqrt((1.0 + beta_o) * mixture_p_o / mixture_d_o);
+    const double V_o = u_o * nx + v_o * ny;
+    const double local_M = V_o / a_o;
+
+    // ps
+    ind = S_ * ipoint;
+    if (std::abs(local_M) >= 1.0) { // supersonic
+      for (int i = 0; i < S_; i++) bdry_u[ind + i] = owner_u[ind + i];
+    } else { // subsonic
+      const double p_ratio = p_over_pinf_ / mixture_p_o;
+
+      for (int i = 0; i < ns_; i++)
+        bdry_u[ind + i] = p_ratio * owner_u[ind + i];
+      for (int i = ns_; i < S_; i++)
+        bdry_u[ind + i] = owner_u[ind + i];
+    }
+  }
+}
+void BackPressureBdryNS2DNeq2Tnondim::ComputeBdryFlux(
+    const int num_points, std::vector<double>& flux, FACE_INPUTS,
+    const std::vector<double>& coords, const double& time) {
+  equation_->ComputeNumFlux(num_points, flux, owner_cell, -1, owner_u,
+                            owner_div_u, neighbor_u, owner_div_u, normal,
+                            coords);
+}
+void BackPressureBdryNS2DNeq2Tnondim::ComputeBdrySolutionJacobi(
+    const int num_points, double* bdry_u_jacobi,
+    const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
+    const std::vector<double>& normal, const std::vector<double>& coords,
+    const double& time) {
+  static std::vector<aDual> bdry_u(S_, aDual(S_));
+  static std::vector<double> dim_d_o(ns_);
+
+  int ind = 0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    // ps
+    ind = S_ * ipoint;
+    std::vector<aDual> d_o(ns_, aDual(S_));
+    for (int i = 0; i < ns_; i++) {
+      dim_d_o[i] = owner_u[ind] * rho_ref_;
+      d_o[i] = aDual(S_, owner_u[ind++], i);
+    }
+    aDual u_o(S_, owner_u[ind++], ns_);
+    aDual v_o(S_, owner_u[ind++], ns_ + 1);
+    aDual T_tr_o(S_, owner_u[ind++], ns_ + 2);
+    aDual T_eev_o(S_, owner_u[ind], ns_ + 3);
+    const double dim_T_tr_o = T_tr_o.f * T_ref_;
+    const double dim_T_eev_o = T_eev_o.f * T_ref_;
+
+    mixture_->SetDensity(&dim_d_o[0]);
+    const double mixture_d_o = mixture_->GetTotalDensity() / rho_ref_;
+
+    aDual mixture_p_o(S_);
+    mixture_p_o.f = mixture_->GetPressureJacobian(dim_T_tr_o, dim_T_eev_o,
+                                                  &mixture_p_o.df[0]);
+    std::swap(mixture_p_o.df[ns_], mixture_p_o.df[ns_ + 2]);
+    std::swap(mixture_p_o.df[ns_ + 1], mixture_p_o.df[ns_ + 3]);
+    mixture_p_o.f /= p_ref_;
+    for (int i = 0; i < ns_; i++) mixture_p_o.df[i] *= rho_ref_ / p_ref_;
+    mixture_p_o.df[ns_ + 2] *= T_ref_ / p_ref_;
+    mixture_p_o.df[ns_ + 3] *= T_ref_ / p_ref_;
+
+    const double beta_o = mixture_->GetBeta(dim_T_tr_o);
+
+    const double a_o = std::sqrt((1.0 + beta_o) * mixture_p_o.f / mixture_d_o);
+    const double V_o = u_o.f * nx + v_o.f * ny;
+    const double local_M = V_o / a_o;
+
+    if (std::abs(local_M) >= 1.0) { // supersonic
+      for (int i = 0; i < ns_; i++) bdry_u[i] = d_o[i];
+      bdry_u[ns_] = u_o;
+      bdry_u[ns_ + 1] = v_o;
+      bdry_u[ns_ + 2] = T_tr_o;
+      bdry_u[ns_ + 3] = T_eev_o;
+    } else {
+      const auto p_ratio = p_over_pinf_ / mixture_p_o;
+
+      for (int i = 0; i < ns_; i++) bdry_u[i] = p_ratio * d_o[i];
+      bdry_u[ns_] = u_o;
+      bdry_u[ns_ + 1] = v_o;
+      bdry_u[ns_ + 2] = T_tr_o;
+      bdry_u[ns_ + 3] = T_eev_o;
+    }
+
+    // pss
+    ind = SS_ * ipoint;
+    for (int istate = 0; istate < S_; istate++)
+      for (int jstate = 0; jstate < S_; jstate++)
+        bdry_u_jacobi[ind++] = bdry_u[istate].df[jstate];
+  }
+}
+void BackPressureBdryNS2DNeq2Tnondim::ComputeBdryFluxJacobi(
+    const int num_points, std::vector<double>& flux_jacobi,
+    std::vector<double>& flux_grad_jacobi, FACE_INPUTS,
+    const std::vector<double>& coords, const double& time) {
+  static const int max_num_bdry_points = equation_->GetMaxNumBdryPoints();
+  static std::vector<double> flux_neighbor_jacobi(max_num_bdry_points * DSS_);
+  static std::vector<double> flux_neighbor_grad_jacobi(max_num_bdry_points *
+                                                       DDSS_);
+  static std::vector<double> bdry_u_jacobi(max_num_bdry_points * SS_);
+
+  equation_->ComputeNumFluxJacobi(num_points, flux_jacobi, flux_neighbor_jacobi,
+                                  flux_grad_jacobi, flux_neighbor_grad_jacobi,
+                                  owner_cell, -1, owner_u, owner_div_u,
+                                  neighbor_u, owner_div_u, normal, coords);
+  ComputeBdrySolutionJacobi(num_points, &bdry_u_jacobi[0], owner_u, owner_div_u,
+                            normal, coords, time);
+
+  for (int ipoint = 0; ipoint < num_points; ipoint++)
+    gemmAB(1.0, &flux_neighbor_jacobi[ipoint * DSS_],
+           &bdry_u_jacobi[ipoint * SS_], 1.0, &flux_jacobi[ipoint * DSS_], DS_,
+           S_, S_);
 }
 // Boundary Name = CatalyticWall
 // BdryInput() = Twall, gamma_N, gamma_O, maxiter (optional)

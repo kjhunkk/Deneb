@@ -136,6 +136,8 @@ class Equation {
   virtual const std::vector<double>& ComputePressureFixValues(
       const double* input_solution) = 0;
   virtual void SolutionLimit(double* solution){};
+  virtual void GetPointPostSolution(const double* solution,
+                                    std::vector<double>& point_solution){};
 };
 extern std::shared_ptr<Equation> DENEB_EQUATION_NAME;
 }  // namespace deneb
