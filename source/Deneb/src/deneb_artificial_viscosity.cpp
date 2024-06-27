@@ -477,6 +477,7 @@ void LaplacianPolyShockFit::SpotSuspect(const double* solution) {
     total_num_suspect += num_suspect[idomain];
     num_suspect[idomain] *= dimension;
   }  
+  if (total_num_suspect == 0) ERROR_MESSAGE("No suspect point.\n");
 
   std::vector<double> suspect_coords(total_num_suspect * dimension);
   std::vector<int> displs(NDOMAIN, 0);
