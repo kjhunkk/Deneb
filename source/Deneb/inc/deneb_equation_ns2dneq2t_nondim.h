@@ -80,6 +80,8 @@ class EquationNS2DNeq2Tnondim : public Equation,
 
   std::vector<double> viscous_scaling_;
   double viscous_scale_factor_;
+  bool boundary_penalty_;
+  double boundary_penalty_factor_;
 
  public:
   EquationNS2DNeq2Tnondim(bool axis = false);
@@ -215,6 +217,19 @@ class BoundaryNS2DNeq2Tnondim : public ConstantsNS2DNeq2Tnondim {
                                      FACE_INPUTS,
                                      const std::vector<double>& coords,
                                      const double& time) = 0;
+  void AddBdryPenalty(const int num_points, std::vector<double>& flux,
+                      const std::vector<double>& owner_u,
+                      const std::vector<double>& neighbor_u,
+                      const std::vector<double>& normal,
+                      const double penalty_factor);
+  void AddBdryPenaltyJacobi(const int num_points,
+                            std::vector<double>& flux_jacobi,
+                            const std::vector<double>& owner_u,
+                            const std::vector<double>& owner_div_u,
+                            const std::vector<double>& neighbor_u,
+                            const std::vector<double>& normal,
+                            const std::vector<double>& coords,
+                            const double& time, const double penalty_factor);
 };
 // Boundary Name = SlipWall
 // Dependency: -

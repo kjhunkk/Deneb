@@ -240,11 +240,34 @@ void EquationNS2DNeq2Tnondim::BuildData(void) {
       S_ * num_bases, DENEB_DATA->GetOuterSendCellList(),
       DENEB_DATA->GetOuterRecvCellList());
 
+  // viscous scaling
   auto& config = AVOCADO_CONFIG;
   const auto& bdry_owner_cell = DENEB_DATA->GetBdryOwnerCell();
   const auto& bdry_tag = DENEB_DATA->GetBdryTag();
   const int& num_total_cells = DENEB_DATA->GetNumTotalCells();
-  viscous_scaling_.resize(num_total_cells, 0.0);
+  viscous_scaling_.resize(num_total_cells, 1.0);
+  viscous_scale_factor_ = 1.0;
+  if (config->IsConfigValue("ViscousScaling")) {
+    viscous_scale_factor_ =
+        std::stod(config->GetConfigValue("ViscousScaling.0"));
+    for (int ibdry = 0; ibdry < num_bdries; ibdry++) {
+      const int owner_cell = bdry_owner_cell[ibdry];
+      const std::string& bdry_type =
+          config->GetConfigValue(BDRY_TYPE(bdry_tag[ibdry]));
+      if (bdry_type.find("Wall") != std::string::npos)
+        viscous_scaling_[owner_cell] = viscous_scale_factor_;
+      else
+        viscous_scaling_[owner_cell] = 1.0;
+    }
+  }
+
+  // boundary penalty
+  boundary_penalty_ = false;
+  boundary_penalty_factor_ = 0.0;
+  if (config->IsConfigValue("BoundaryPenalty")) {
+    boundary_penalty_ = true;
+    boundary_penalty_factor_ = std::stod(config->GetConfigValue("BoundaryPenalty.0"));
+  }
 
   std::vector<std::string> variable_names;
   for (auto& sp : mixture_->GetSpecies())
@@ -695,7 +718,12 @@ void EquationNS2DNeq2Tnondim::ComputeRHS(const double* solution, double* rhs,
     boundaries_[ibdry]->ComputeBdryFlux(
         num_points, flux, owner_cell, -1, owner_solution, owner_solution_grad,
         neighbor_solution, neighbor_solution_grad, bdry_normals[ibdry],
-        bdry_points[ibdry], t);
+        bdry_points[ibdry], t);    
+
+    if (boundary_penalty_)
+      boundaries_[ibdry]->AddBdryPenalty(num_points, flux, owner_solution,
+                                         neighbor_solution,
+                                         bdry_normals[ibdry], boundary_penalty_factor_);
 
     avocado::Kernel2::f67(&flux[0], &bdry_owner_coefficients[ibdry][0],
                           &rhs[owner_cell * sb], S_, D_, num_points, num_bases,
@@ -1021,6 +1049,12 @@ void EquationNS2DNeq2Tnondim::ComputeSystemMatrix(const double* solution,
         num_points, flux_owner_jacobi, flux_owner_grad_jacobi, owner_cell, -1,
         owner_solution, owner_solution_grad, neighbor_solution,
         neighbor_solution_grad, bdry_normals[ibdry], bdry_points[ibdry], t);
+        
+    if (boundary_penalty_)
+      boundaries_[ibdry]->AddBdryPenaltyJacobi(
+          num_points, flux_owner_jacobi, owner_solution, owner_solution_grad,
+          neighbor_solution, bdry_normals[ibdry], bdry_points[ibdry], t,
+          boundary_penalty_factor_);
 
     memset(&largeA[0], 0, num_points * ssb * sizeof(double));
     for (int ipoint = 0; ipoint < num_points; ipoint++) {
@@ -1049,6 +1083,7 @@ void EquationNS2DNeq2Tnondim::ComputeSystemMatrix(const double* solution,
                  &bdry_owner_basis_value[ibdry][ipoint * num_bases], 1,
                  &flux_derivative[ipoint * dssb], num_bases);
     }
+
     avocado::Kernel1::f59(&flux_derivative[0],
                           &bdry_owner_coefficients[ibdry][0], &block[0], S_, sb,
                           num_points * D_, num_bases, 1.0, 0.0);
@@ -3677,6 +3712,56 @@ std::shared_ptr<BoundaryNS2DNeq2Tnondim> BoundaryNS2DNeq2Tnondim::GetBoundary(
                                                                equation);
   ERROR_MESSAGE("Wrong boundary condition (no-exist):" + type + "\n");
   return nullptr;
+}
+void BoundaryNS2DNeq2Tnondim::AddBdryPenalty(
+  const int num_points, std::vector<double>& flux,
+  const std::vector<double>& owner_u, const std::vector<double>& neighbor_u,
+  const std::vector<double>& normal, const double penalty_factor)
+{
+  int ind = 0;
+  int ind2 = 0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    ind = DS_ * ipoint;
+    ind2 = S_ * ipoint;
+    for (int i = 0; i < S_; i++)
+      flux[ind++] +=
+          (owner_u[ind2 + i] - neighbor_u[ind2 + i]) * nx * penalty_factor;
+    for (int i = 0; i < S_; i++)
+      flux[ind++] +=
+          (owner_u[ind2 + i] - neighbor_u[ind2 + i]) * ny * penalty_factor; 
+  }
+
+}
+void BoundaryNS2DNeq2Tnondim::AddBdryPenaltyJacobi(
+    const int num_points, std::vector<double>& flux_jacobi,
+    const std::vector<double>& owner_u, const std::vector<double>& owner_div_u,
+    const std::vector<double>& neighbor_u, const std::vector<double>& normal,
+    const std::vector<double>& coords, const double& time,
+    const double penalty_factor) {
+  static std::vector<double> bdry_u_jacobi(num_points * SS_);
+
+  ComputeBdrySolutionJacobi(num_points, &bdry_u_jacobi[0], owner_u, owner_div_u,
+                            normal, coords, time);
+  
+  int ind = 0;
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    GET_NORMAL_PD(normal);
+
+    ind = DS_ * ipoint;
+    for (int i = 0; i < S_; i++) {
+      for (int j = 0; j < S_; j++)
+        flux_jacobi[ind] -= bdry_u_jacobi[ind++] * nx * penalty_factor;
+      flux_jacobi[DS_ * ipoint + i * S_ + i] += nx * penalty_factor;
+    }
+    for (int i = 0; i < S_; i++) {
+      for (int j = 0; j < S_; j++)
+        flux_jacobi[ind] -= bdry_u_jacobi[ind++] * ny * penalty_factor;
+      flux_jacobi[DS_ * ipoint + i * S_ + i] += ny * penalty_factor;
+    }         
+  }
+
 }
 // Boundary Name = SlipWall
 // Dependency: -
