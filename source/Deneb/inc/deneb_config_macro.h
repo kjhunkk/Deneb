@@ -45,8 +45,9 @@
 #define STOP_CONTROL_VALUE "Stop.1"
 #define MAX_ITERATION "MaxIter"
 
-#define NEWTON_ERROR_TOL "Newton.0"
-#define NEWTON_MAX_ITERATION "Newton.1"
+#define NEWTON_RELATIVE_ERROR_TOL "Newton.0"
+#define NEWTON_ABSOLUTE_ERROR_TOL "Newton.1"
+#define NEWTON_MAX_ITERATION "Newton.2"
 
 #define JACOBIAN_RECOMPUTE_TOL "JacobianRecompute.0"
 #define JACOBIAN_RECOMPUTE_ITERATION "JacobianRecompute.1"

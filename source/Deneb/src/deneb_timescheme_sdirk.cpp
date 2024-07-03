@@ -70,7 +70,9 @@ void TimeschemeSDIRK::BuildData(void) {
     ERROR_MESSAGE(
         "Wrong roll back mechanism (no-exist): " + roll_back_mechanism + "\n");
   newton_relative_error_tol_ =
-      std::stod(config->GetConfigValue(NEWTON_ERROR_TOL));
+      std::stod(config->GetConfigValue(NEWTON_RELATIVE_ERROR_TOL));
+  newton_absolute_error_tol_ =
+      std::stod(config->GetConfigValue(NEWTON_ABSOLUTE_ERROR_TOL));
   max_newton_iteration_ =
       std::stoi(config->GetConfigValue(NEWTON_MAX_ITERATION));
 
@@ -120,8 +122,22 @@ void TimeschemeSDIRK::Marching(void) {
   const double* solution = &solution_[0];
   double *temp_rhs_ptr, *stage_solution_ptr, *stage_rhs_ptr;
   double relative_delta_norm = 1.0;
+  double delta_norm = 1.0;
   std::vector<double> pseudo_local_timestep(num_cells, 0.0);
   std::vector<double> pseudo_local_timestep_inv(num_cells, 0.0);
+
+  // for debug
+  std::string filename =
+      dir + RETURN_POST_DIR + "history" + std::to_string(iteration_) + ".dat";
+  std::ofstream history;
+  if (MYRANK == MASTER_NODE) {
+    history.open(filename);
+    history << "variables = \"time\", \"ComT\", "
+               "\"rho_N2\", \"rho_O2\", \"rho_NO\", \"rho_N\", \"rho_O\", "
+               "\"T_tr\", \"T_eev\", \"rho\", \"p\", \"e\", \"e_eev\"\n";
+    history.close();
+  }
+  // end for debug
 
   while (iteration_ < max_iteration_) {
     START_TIMER();
@@ -185,7 +201,7 @@ void TimeschemeSDIRK::Marching(void) {
       // Newton iteration
       relative_delta_norm = 1.0;
       int newton_iteration = 0;
-      double delta_norm = 0.0;
+      delta_norm = 1.0;
       double initial_delta_norm = 0.0;
       double convergence_rate = 0.0;
       double prev_delta_norm = 0.0;
@@ -255,6 +271,7 @@ void TimeschemeSDIRK::Marching(void) {
         int sub_iteration = solver_.Solve(sysmat_, temp_rhs_, delta_);
         int converged = solver_.GetConvergedReason();  // Check convergence
         if (converged < 0) {
+
           MASTER_MESSAGE("GMRES diverged! : KSPConvergedReason = " +
                          std::to_string(converged) + "\n");
           if (converged == -3) {
@@ -288,6 +305,15 @@ void TimeschemeSDIRK::Marching(void) {
         // Solution update
         VecAXPY(stage_solution_, 1.0, delta_);
 
+        prev_delta_norm = delta_norm;
+        VecNorm(delta_, NORM_2, &delta_norm);
+        if (newton_iteration == 1) {
+          initial_delta_norm = delta_norm;
+          convergence_rate = 1.0;
+        } else
+          convergence_rate = delta_norm / prev_delta_norm;
+        relative_delta_norm = delta_norm / initial_delta_norm;
+
         // printmessage
         {
           std::stringstream ss;
@@ -303,20 +329,15 @@ void TimeschemeSDIRK::Marching(void) {
              << pseudo_timestep_controller_->GetTimestepControlValue();
           ss << " |  Newton subiter=" << newton_iteration;
           ss << " |  GMRES subiter=" << sub_iteration;
-          ss << " |  delta norm=" << std::scientific << std::setprecision(3)
+          ss << " |  rel.delta=" << std::scientific << std::setprecision(3)
              << relative_delta_norm;
+          ss << " |  abs.delta=" << std::scientific << std::setprecision(3)
+             << delta_norm;
           MASTER_MESSAGE(ss.str() + "\n");
         }
 
-        prev_delta_norm = delta_norm;
-        VecNorm(delta_, NORM_2, &delta_norm);
-        if (newton_iteration == 1) {
-          initial_delta_norm = delta_norm;
-          convergence_rate = 1.0;
-        } else
-          convergence_rate = delta_norm / prev_delta_norm;
-        relative_delta_norm = delta_norm / initial_delta_norm;
         if (relative_delta_norm < newton_relative_error_tol_) break;
+        if (delta_norm < newton_absolute_error_tol_) break;
       }
       sum_newton_iteration += newton_iteration;
     }
@@ -356,10 +377,37 @@ void TimeschemeSDIRK::Marching(void) {
       ss << " |  GMRES avg subiter="
          << static_cast<double>(sum_sub_iteration[1]) /
                 static_cast<double>(sum_sub_iteration[0]);
-      ss << " |  delta norm=" << std::scientific << std::setprecision(3)
+      ss << " |  rel.delta=" << std::scientific << std::setprecision(3)
          << relative_delta_norm;
+      ss << " |  abs.delta=" << std::scientific << std::setprecision(3)
+         << delta_norm;
       MASTER_MESSAGE(ss.str() + "\n");
     }
+
+    // for debug
+    // print log
+    if (MYRANK == MASTER_NODE) {
+      std::vector<double> point_solution;
+      DENEB_EQUATION->GetPointPostSolution(&solution_[0], point_solution);
+
+      history.open(filename, std::ios::app);
+      history << std::scientific << std::setprecision(5);
+      history << GetCurrentTime() << "\t";
+      history << computing_cost_ << "\t";
+      history << point_solution[0] << "\t"; // N2
+      history << point_solution[1] << "\t"; // O2
+      history << point_solution[2] << "\t"; // NO
+      history << point_solution[3] << "\t"; // N
+      history << point_solution[4] << "\t"; // O
+      history << point_solution[5] << "\t"; // T_tr
+      history << point_solution[6] << "\t"; // T_eev
+      history << point_solution[7] << "\n"; // rho
+      history << point_solution[8] << "\n";  // p
+      history << point_solution[9] << "\n";  // e
+      history << point_solution[10] << "\n";  // e_eev
+      history.close();
+    }
+    // end for debug
 
     // Checking interruption
     is_stop = is_stop || stop_.CheckIterationFinish(iteration_);
