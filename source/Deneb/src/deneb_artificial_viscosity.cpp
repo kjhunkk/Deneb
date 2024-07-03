@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <unordered_set>
+#include <fstream>
 
 #include "avocado.h"
 #include "deneb_config_macro.h"
@@ -367,6 +368,34 @@ void LaplacianPolyShockFit::BuildData(void) {
   communicate_ = std::make_shared<avocado::Communicate>(
       1, DENEB_DATA->GetOuterSendCellList(),
       DENEB_DATA->GetOuterRecvCellList());
+
+  if (MYRANK == MASTER_NODE) {
+    auto& config = AVOCADO_CONFIG;
+    const std::string& dir = config->GetConfigValue(RETURN_DIR);
+    std::string filename = dir + RETURN_POST_DIR + "shock_poly_coeff.dat";
+    std::ifstream file(filename);
+    if (file.is_open()) {
+      loaded_ = 1;
+      std::string str;
+      getline(file, str);
+      poly_order_ = std::stoi(str);
+      shock_poly_coeff_.clear();
+      shock_poly_coeff_.resize(poly_order_ + 1, 0.0);
+      int index = 0;
+      while ((index <= poly_order_) && (getline(file, str))) {
+        shock_poly_coeff_[index++] = std::stod(str);
+      }        
+    } else
+      loaded_ = 0;
+    file.close();
+  }
+  MPI_Bcast(&loaded_, 1, MPI_INT, MASTER_NODE, MPI_COMM_WORLD);
+  if (loaded_) {
+    MPI_Bcast(&poly_order_, 1, MPI_INT, MASTER_NODE, MPI_COMM_WORLD);
+    MPI_Bcast(&shock_poly_coeff_[0], poly_order_ + 1, MPI_DOUBLE, MASTER_NODE,
+              MPI_COMM_WORLD);
+    MASTER_MESSAGE("Shock Polynomial Coefficients are loaded!!!\n");
+  }
 }
 void LaplacianPolyShockFit::ComputeArtificialViscosity(const double* solution,
                                              const double dt) {
@@ -382,9 +411,11 @@ void LaplacianPolyShockFit::ComputeArtificialViscosity(const double* solution,
   static int av_timer = 0;
 
   if (av_timer-- == 0) {
-    SpotSuspect(solution);
-    DBSCAN();
-    ShockPolyFit();
+    if (loaded_ == 0) {
+      SpotSuspect(solution);
+      DBSCAN();
+      ShockPolyFit();
+    }    
     ComputeDistanceFromShock();
 
     av_timer = update_period_;
@@ -605,6 +636,21 @@ void LaplacianPolyShockFit::ShockPolyFit() {
       B[i] -= A[i][j] * shock_poly_coeff_[j];
     }
     shock_poly_coeff_[i] = B[i] / A[i][i];
+  }
+
+  if (MYRANK == MASTER_NODE) {
+    if (!loaded_) {
+      auto& config = AVOCADO_CONFIG;
+      const std::string& dir = config->GetConfigValue(RETURN_DIR);
+      std::string filename = dir + RETURN_POST_DIR + "shock_poly_coeff.dat";
+      std::ofstream file;
+      file.open(filename);
+
+      file << poly_order_ << "\n";
+      for (int i = 0; i <= poly_order_; ++i)
+        file << shock_poly_coeff_[i] << "\n";
+      file.close();
+    }    
   }
 }
 

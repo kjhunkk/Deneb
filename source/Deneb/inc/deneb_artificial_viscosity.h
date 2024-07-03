@@ -174,6 +174,7 @@ class LaplacianPolyShockFit : public ArtificialViscosity {
   };
 
  protected:
+  int loaded_;
   int num_bases_m1_;  // num basis of P(n-1)
   int poly_order_;
   int minPts_;
