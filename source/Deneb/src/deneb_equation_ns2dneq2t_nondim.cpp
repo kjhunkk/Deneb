@@ -3753,7 +3753,7 @@ void BoundaryNS2DNeq2Tnondim::AddBdryPenaltyJacobi(
     const std::vector<double>& neighbor_u, const std::vector<double>& normal,
     const std::vector<double>& coords, const double& time,
     const double penalty_factor) {
-  static std::vector<double> bdry_u_jacobi(num_points * SS_);
+  std::vector<double> bdry_u_jacobi(num_points * SS_);
 
   ComputeBdrySolutionJacobi(num_points, &bdry_u_jacobi[0], owner_u, owner_div_u,
                             normal, coords, time);
