@@ -205,7 +205,7 @@ void TimeschemeSDIRK::Marching(void) {
       double initial_delta_norm = 0.0;
       double convergence_rate = 0.0;
       double prev_delta_norm = 0.0;
-      VecSet(temp_delta_, 0.0);
+      //VecSet(temp_delta_, 0.0);
       pseudo_timestep_controller_->IntializeTimestepControlValue();
       while (newton_iteration < max_newton_iteration_) {
         // Stage RHS formulation
@@ -297,10 +297,11 @@ void TimeschemeSDIRK::Marching(void) {
         }
         sum_sub_iteration[0]++;
         sum_sub_iteration[1] += sub_iteration;
-        VecAYPX(temp_delta_, -1.0, delta_);
-        VecCopy(delta_, temp_delta_);
+        //VecAYPX(temp_delta_, -1.0, delta_);
+        //VecCopy(delta_, temp_delta_);
 
         newton_iteration++;
+        sum_newton_iteration++;
         jacobi_recompute_iteration++;
         // Solution update
         VecAXPY(stage_solution_, 1.0, delta_);
@@ -336,10 +337,37 @@ void TimeschemeSDIRK::Marching(void) {
           MASTER_MESSAGE(ss.str() + "\n");
         }
 
+        // for debug
+        // print log
+        VecGetArray(stage_solution_, &stage_solution_ptr);
+        if (MYRANK == MASTER_NODE) {
+          std::vector<double> point_solution;
+          DENEB_EQUATION->GetPointPostSolution(stage_solution_ptr, point_solution);
+
+          history.open(filename, std::ios::app);
+          history << std::scientific << std::setprecision(5);
+          history << sum_newton_iteration << "\t";
+          history << computing_cost_ << "\t";
+          history << point_solution[0] << "\t";   // N2
+          history << point_solution[1] << "\t";   // O2
+          history << point_solution[2] << "\t";   // NO
+          history << point_solution[3] << "\t";   // N
+          history << point_solution[4] << "\t";   // O
+          history << point_solution[5] << "\t";   // T_tr
+          history << point_solution[6] << "\t";   // T_eev
+          history << point_solution[7] << "\t";   // rho
+          history << point_solution[8] << "\t";   // p
+          history << point_solution[9] << "\t";   // e
+          history << point_solution[10] << "\n";  // e_eev
+          history.close();
+        }
+        VecRestoreArray(stage_solution_, &stage_solution_ptr);
+        // end for debug
+
         if (relative_delta_norm < newton_relative_error_tol_) break;
         if (delta_norm < newton_absolute_error_tol_) break;
       }
-      sum_newton_iteration += newton_iteration;
+      //sum_newton_iteration += newton_iteration;
     }
 
     // Solution update
@@ -386,27 +414,27 @@ void TimeschemeSDIRK::Marching(void) {
 
     // for debug
     // print log
-    if (MYRANK == MASTER_NODE) {
-      std::vector<double> point_solution;
-      DENEB_EQUATION->GetPointPostSolution(&solution_[0], point_solution);
+    //if (MYRANK == MASTER_NODE) {
+    //  std::vector<double> point_solution;
+    //  DENEB_EQUATION->GetPointPostSolution(&solution_[0], point_solution);
 
-      history.open(filename, std::ios::app);
-      history << std::scientific << std::setprecision(5);
-      history << GetCurrentTime() << "\t";
-      history << computing_cost_ << "\t";
-      history << point_solution[0] << "\t"; // N2
-      history << point_solution[1] << "\t"; // O2
-      history << point_solution[2] << "\t"; // NO
-      history << point_solution[3] << "\t"; // N
-      history << point_solution[4] << "\t"; // O
-      history << point_solution[5] << "\t"; // T_tr
-      history << point_solution[6] << "\t"; // T_eev
-      history << point_solution[7] << "\n"; // rho
-      history << point_solution[8] << "\n";  // p
-      history << point_solution[9] << "\n";  // e
-      history << point_solution[10] << "\n";  // e_eev
-      history.close();
-    }
+    //  history.open(filename, std::ios::app);
+    //  history << std::scientific << std::setprecision(5);
+    //  history << GetCurrentTime() << "\t";
+    //  history << computing_cost_ << "\t";
+    //  history << point_solution[0] << "\t"; // N2
+    //  history << point_solution[1] << "\t"; // O2
+    //  history << point_solution[2] << "\t"; // NO
+    //  history << point_solution[3] << "\t"; // N
+    //  history << point_solution[4] << "\t"; // O
+    //  history << point_solution[5] << "\t"; // T_tr
+    //  history << point_solution[6] << "\t"; // T_eev
+    //  history << point_solution[7] << "\t"; // rho
+    //  history << point_solution[8] << "\t";  // p
+    //  history << point_solution[9] << "\t";  // e
+    //  history << point_solution[10] << "\n";  // e_eev
+    //  history.close();
+    //}
     // end for debug
 
     // Checking interruption

@@ -721,9 +721,9 @@ void EquationNS2DNeq2Tnondim::ComputeRHS(const double* solution, double* rhs,
         bdry_points[ibdry], t);    
 
     if (boundary_penalty_)
-      boundaries_[ibdry]->AddBdryPenalty(num_points, flux, owner_solution,
-                                         neighbor_solution,
-                                         bdry_normals[ibdry], boundary_penalty_factor_);
+      boundaries_[ibdry]->AddBdryPenalty(
+          num_points, flux, owner_solution, neighbor_solution,
+          bdry_normals[ibdry], bdry_points[ibdry], boundary_penalty_factor_);
 
     avocado::Kernel2::f67(&flux[0], &bdry_owner_coefficients[ibdry][0],
                           &rhs[owner_cell * sb], S_, D_, num_points, num_bases,
@@ -3727,25 +3727,82 @@ std::shared_ptr<BoundaryNS2DNeq2Tnondim> BoundaryNS2DNeq2Tnondim::GetBoundary(
   return nullptr;
 }
 void BoundaryNS2DNeq2Tnondim::AddBdryPenalty(
-  const int num_points, std::vector<double>& flux,
-  const std::vector<double>& owner_u, const std::vector<double>& neighbor_u,
-  const std::vector<double>& normal, const double penalty_factor)
-{
+    const int num_points, std::vector<double>& flux,
+    const std::vector<double>& owner_u, const std::vector<double>& neighbor_u,
+    const std::vector<double>& normal, const std::vector<double>& coords,
+    const double penalty_factor) {
+  const auto& species = mixture_->GetSpecies();
+
   int ind = 0;
   int ind2 = 0;
+  std::vector<double> dim_d_o(ns_);
+  std::vector<double> dim_d_n(ns_);
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_NORMAL_PD(normal);
 
-    ind = DS_ * ipoint;
-    ind2 = S_ * ipoint;
-    for (int i = 0; i < S_; i++)
-      flux[ind++] +=
-          (owner_u[ind2 + i] - neighbor_u[ind2 + i]) * nx * penalty_factor;
-    for (int i = 0; i < S_; i++)
-      flux[ind++] +=
-          (owner_u[ind2 + i] - neighbor_u[ind2 + i]) * ny * penalty_factor; 
-  }
+    GET_SOLUTION_PS(_o, owner_u);
+    GET_SOLUTION_PS(_n, neighbor_u);
 
+    // owner solution
+    mixture_->SetDensity(&dim_d_o[0]);
+    const double mixture_d_o = mixture_->GetTotalDensity() / rho_ref_;
+    const double mixture_p_o =
+        mixture_->GetPressure(dim_T_tr_o, dim_T_eev_o) / p_ref_;
+    double de_o = 0.0;
+    double de_eev_o = 0.0;
+    for (int i = 0; i < ns_; i++) {
+      const double e_o =
+          species[i]->GetInternalEnergy(dim_T_tr_o, dim_T_eev_o) / e_ref_;
+      const double e_eev_o =
+          species[i]->GetElectronicVibrationEnergy(dim_T_eev_o) / e_ref_;
+
+      de_o += d_o[i] * e_o;
+      de_eev_o += d_o[i] * e_eev_o;    
+    }
+
+    const double du_o = mixture_d_o * u_o;
+    const double dv_o = mixture_d_o * v_o;
+    const double dE_o = de_o + 0.5 * (du_o * u_o + dv_o * v_o);
+
+    // neighbor solution
+    mixture_->SetDensity(&dim_d_n[0]);
+    const double mixture_d_n = mixture_->GetTotalDensity() / rho_ref_;
+    const double mixture_p_n =
+        mixture_->GetPressure(dim_T_tr_n, dim_T_eev_n) / p_ref_;
+    double de_n = 0.0;
+    double de_eev_n = 0.0;
+    for (int i = 0; i < ns_; i++) {
+      const double e_n =
+          species[i]->GetInternalEnergy(dim_T_tr_n, dim_T_eev_n) / e_ref_;
+      const double e_eev_n =
+          species[i]->GetElectronicVibrationEnergy(dim_T_eev_n) / e_ref_;
+
+      de_n += d_n[i] * e_n;
+      de_eev_n += d_n[i] * e_eev_n;
+    }
+
+    const double du_n = mixture_d_n * u_n;
+    const double dv_n = mixture_d_n * v_n;
+    const double dE_n = de_n + 0.5 * (du_n * u_n + dv_n * v_n);
+
+    const double y = coords[ipoint * D_ + 1];
+    const double fy = static_cast<double>(ax_) * (y - 1.0) + 1.0;
+
+    ind = DS_ * ipoint;
+    for (int i = 0; i < ns_; i++)
+      flux[ind++] += (d_o[i] - d_n[i]) * nx * fy * penalty_factor;
+    flux[ind++] += (du_o - du_n) * nx * fy * penalty_factor;
+    flux[ind++] += (dv_o - dv_n) * nx * fy * penalty_factor;
+    flux[ind++] += (dE_o - dE_n) * nx * fy * penalty_factor;
+    flux[ind++] += (de_eev_o - de_eev_n) * nx * fy * penalty_factor;
+
+    for (int i = 0; i < ns_; i++)
+      flux[ind++] += (d_o[i] - d_n[i]) * ny * fy * penalty_factor;
+    flux[ind++] += (du_o - du_n) * ny * fy * penalty_factor;
+    flux[ind++] += (dv_o - dv_n) * ny * fy * penalty_factor;
+    flux[ind++] += (dE_o - dE_n) * ny * fy * penalty_factor;
+    flux[ind] += (de_eev_o - de_eev_n) * ny * fy * penalty_factor;
+  }
 }
 void BoundaryNS2DNeq2Tnondim::AddBdryPenaltyJacobi(
     const int num_points, std::vector<double>& flux_jacobi,
@@ -3754,27 +3811,107 @@ void BoundaryNS2DNeq2Tnondim::AddBdryPenaltyJacobi(
     const std::vector<double>& coords, const double& time,
     const double penalty_factor) {
   std::vector<double> bdry_u_jacobi(num_points * SS_);
+  std::vector<double> penalty_jacobi(num_points * DSS_);
 
   ComputeBdrySolutionJacobi(num_points, &bdry_u_jacobi[0], owner_u, owner_div_u,
                             normal, coords, time);
   
+  ComputeSolutionJacobi(num_points, penalty_jacobi, owner_u);
+
   int ind = 0;
+  int ind2 = 0;
   for (int ipoint = 0; ipoint < num_points; ipoint++) {
     GET_NORMAL_PD(normal);
 
-    ind = DS_ * ipoint;
-    for (int i = 0; i < S_; i++) {
-      for (int j = 0; j < S_; j++)
-        flux_jacobi[ind] -= bdry_u_jacobi[ind++] * nx * penalty_factor;
-      flux_jacobi[DS_ * ipoint + i * S_ + i] += nx * penalty_factor;
-    }
-    for (int i = 0; i < S_; i++) {
-      for (int j = 0; j < S_; j++)
-        flux_jacobi[ind] -= bdry_u_jacobi[ind++] * ny * penalty_factor;
-      flux_jacobi[DS_ * ipoint + i * S_ + i] += ny * penalty_factor;
-    }         
-  }
+    const double y = coords[ipoint * D_ + 1];
+    const double fy = static_cast<double>(ax_) * (y - 1.0) + 1.0;    
 
+    ind = DSS_ * ipoint;
+    ind2 = SS_ * ipoint;
+    for (int i = 0; i < S_; i++)
+      for (int j = 0; j < S_; j++) {
+        penalty_jacobi[ind] -= bdry_u_jacobi[ind2 + i * S_ + j];
+        penalty_jacobi[ind++] *= nx * fy * penalty_factor;
+      }
+    for (int i = 0; i < S_; i++)
+      for (int j = 0; j < S_; j++) {
+        penalty_jacobi[ind] -= bdry_u_jacobi[ind2 + i * S_ + j];
+        penalty_jacobi[ind++] *= ny * fy * penalty_factor;
+      }  
+
+    ind = DSS_ * ipoint;
+    for (int i = 0; i < DSS_; i++) flux_jacobi[ind] += penalty_jacobi[ind++];
+  }
+}
+void BoundaryNS2DNeq2Tnondim::ComputeSolutionJacobi(
+    const int num_points, std::vector<double>& jacobi,
+    const std::vector<double>& owner_u) {
+  const auto& species = mixture_->GetSpecies();
+  std::vector<aDual> values(S_, aDual(S_));
+  std::vector<double> dim_d(ns_);
+  for (int ipoint = 0; ipoint < num_points; ipoint++) {
+    const double* sol = &owner_u[ipoint * S_];
+    std::vector<aDual> d(ns_, aDual(S_));
+    for (int i = 0; i < ns_; i++) {
+      dim_d[i] = sol[i] * rho_ref_;
+      d[i] = aDual(S_, sol[i], i);
+    }
+    aDual u(S_, sol[ns_], ns_);
+    aDual v(S_, sol[ns_ + 1], ns_ + 1);
+    const auto& T_tr = sol[ns_ + 2];
+    const auto& T_eev = sol[ns_ + 3];
+    const double dim_T_tr = T_tr * T_ref_;
+    const double dim_T_eev = T_eev * T_ref_;
+
+    aDual mixture_d(S_);
+    for (int i = 0; i < ns_; i++) mixture_d = mixture_d + d[i];
+
+    for (int i = 0; i < ns_; i++) values[i] = d[i];
+    values[ns_] = mixture_d * u;
+    values[ns_ + 1] = mixture_d * v;
+
+    aDual de(S_, 0.0);
+    aDual de_eev(S_, 0.0);
+
+    mixture_->SetDensity(&dim_d[0]);
+    for (int i = 0; i < ns_; i++) {
+      const auto e =
+          species[i]->GetInternalEnergy(dim_T_tr, dim_T_eev) / e_ref_;
+      const auto e_eev =
+          species[i]->GetElectronicVibrationEnergy(dim_T_eev) / e_ref_;
+      const auto Cv_tr =
+          species[i]->GetTransRotationSpecificHeat(dim_T_tr) * T_ref_ / e_ref_;
+      const auto Cv_eev =
+          species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev) * T_ref_ /
+          e_ref_;
+
+      de.f += d[i].f * e;
+      de.df[i] = e;
+      de.df[ns_ + 2] += d[i].f * Cv_tr;
+      de.df[ns_ + 3] += d[i].f * Cv_eev;
+
+      de_eev.f += d[i].f * e_eev;
+      de_eev.df[i] = e_eev;
+      de_eev.df[ns_ + 3] += d[i].f * Cv_eev;
+    }
+    if (dim_T_eev < 250.0) {
+      double sum = 0.0;
+      for (int i = 0; i < ns_; i++) {
+        const auto Cv_eev =
+            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev + 10.0) *
+            T_ref_ / e_ref_;
+        sum += d[i].f * Cv_eev;
+      }
+      de_eev.df[ns_ + 3] = sum;
+      de.df[ns_ + 3] = sum;
+    }
+    values[ns_ + 2] = de + 0.5 * mixture_d * (u * u + v * v);
+    values[ns_ + 3] = de_eev;
+
+    int ind = SS_ * ipoint;
+    for (int i = 0; i < S_; i++)
+      for (int j = 0; j < S_; j++) jacobi[ind++] = values[i].df[j];
+  }
 }
 // Boundary Name = SlipWall
 // Dependency: -

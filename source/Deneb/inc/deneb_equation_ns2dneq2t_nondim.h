@@ -217,12 +217,13 @@ class BoundaryNS2DNeq2Tnondim : public ConstantsNS2DNeq2Tnondim {
                                      FACE_INPUTS,
                                      const std::vector<double>& coords,
                                      const double& time) = 0;
-  void AddBdryPenalty(const int num_points, std::vector<double>& flux,
+  virtual void AddBdryPenalty(const int num_points, std::vector<double>& flux,
                       const std::vector<double>& owner_u,
                       const std::vector<double>& neighbor_u,
                       const std::vector<double>& normal,
+                      const std::vector<double>& coords,
                       const double penalty_factor);
-  void AddBdryPenaltyJacobi(const int num_points,
+  virtual void AddBdryPenaltyJacobi(const int num_points,
                             std::vector<double>& flux_jacobi,
                             const std::vector<double>& owner_u,
                             const std::vector<double>& owner_div_u,
@@ -230,6 +231,8 @@ class BoundaryNS2DNeq2Tnondim : public ConstantsNS2DNeq2Tnondim {
                             const std::vector<double>& normal,
                             const std::vector<double>& coords,
                             const double& time, const double penalty_factor);
+  void ComputeSolutionJacobi(const int num_points, std::vector<double>& jacobi,
+                             const std::vector<double>& owner_u);
 };
 // Boundary Name = SlipWall
 // Dependency: -
@@ -242,6 +245,22 @@ class SlipWallNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
                           EquationNS2DNeq2Tnondim* equation);
   virtual ~SlipWallNS2DNeq2Tnondim(){};
 
+  virtual void AddBdryPenalty(const int num_points, std::vector<double>& flux,
+                              const std::vector<double>& owner_u,
+                              const std::vector<double>& neighbor_u,
+                              const std::vector<double>& normal,
+                              const std::vector<double>& coords,
+                              const double penalty_factor){};
+  virtual void AddBdryPenaltyJacobi(const int num_points,
+                                    std::vector<double>& flux_jacobi,
+                                    const std::vector<double>& owner_u,
+                                    const std::vector<double>& owner_div_u,
+                                    const std::vector<double>& neighbor_u,
+                                    const std::vector<double>& normal,
+                                    const std::vector<double>& coords,
+                                    const double& time,
+                                    const double penalty_factor){};
+
   BOUNDARY_METHODS;
 };
 
@@ -253,6 +272,22 @@ public:
   AxiSymmetryNS2DNeq2Tnondim(const int bdry_tag,
     EquationNS2DNeq2Tnondim* equation);
   virtual ~AxiSymmetryNS2DNeq2Tnondim() {};
+
+  virtual void AddBdryPenalty(const int num_points, std::vector<double>& flux,
+                              const std::vector<double>& owner_u,
+                              const std::vector<double>& neighbor_u,
+                              const std::vector<double>& normal,
+                              const std::vector<double>& coords,
+                              const double penalty_factor){};
+  virtual void AddBdryPenaltyJacobi(const int num_points,
+                                    std::vector<double>& flux_jacobi,
+                                    const std::vector<double>& owner_u,
+                                    const std::vector<double>& owner_div_u,
+                                    const std::vector<double>& neighbor_u,
+                                    const std::vector<double>& normal,
+                                    const std::vector<double>& coords,
+                                    const double& time,
+                                    const double penalty_factor){};
 
   BOUNDARY_METHODS;
 };
@@ -308,6 +343,22 @@ class SupersonicInflowBdryNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
                                       EquationNS2DNeq2Tnondim* equation);
   virtual ~SupersonicInflowBdryNS2DNeq2Tnondim(){};
 
+  virtual void AddBdryPenalty(const int num_points, std::vector<double>& flux,
+                              const std::vector<double>& owner_u,
+                              const std::vector<double>& neighbor_u,
+                              const std::vector<double>& normal,
+                              const std::vector<double>& coords,
+                              const double penalty_factor){};
+  virtual void AddBdryPenaltyJacobi(const int num_points,
+                                    std::vector<double>& flux_jacobi,
+                                    const std::vector<double>& owner_u,
+                                    const std::vector<double>& owner_div_u,
+                                    const std::vector<double>& neighbor_u,
+                                    const std::vector<double>& normal,
+                                    const std::vector<double>& coords,
+                                    const double& time,
+                                    const double penalty_factor){};
+
   BOUNDARY_METHODS;
 };
 
@@ -318,6 +369,22 @@ class SupersonicOutflowBdryNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
   SupersonicOutflowBdryNS2DNeq2Tnondim(const int bdry_tag,
                                        EquationNS2DNeq2Tnondim* equation);
   virtual ~SupersonicOutflowBdryNS2DNeq2Tnondim(){};
+
+  virtual void AddBdryPenalty(const int num_points, std::vector<double>& flux,
+                              const std::vector<double>& owner_u,
+                              const std::vector<double>& neighbor_u,
+                              const std::vector<double>& normal,
+                              const std::vector<double>& coords,
+                              const double penalty_factor){};
+  virtual void AddBdryPenaltyJacobi(const int num_points,
+                                    std::vector<double>& flux_jacobi,
+                                    const std::vector<double>& owner_u,
+                                    const std::vector<double>& owner_div_u,
+                                    const std::vector<double>& neighbor_u,
+                                    const std::vector<double>& normal,
+                                    const std::vector<double>& coords,
+                                    const double& time,
+                                    const double penalty_factor){};
 
   BOUNDARY_METHODS;
 };
@@ -332,6 +399,22 @@ class BackPressureBdryNS2DNeq2Tnondim : public BoundaryNS2DNeq2Tnondim {
   BackPressureBdryNS2DNeq2Tnondim(const int bdry_tag,
                                   EquationNS2DNeq2Tnondim* equation);
   virtual ~BackPressureBdryNS2DNeq2Tnondim(){};
+
+  virtual void AddBdryPenalty(const int num_points, std::vector<double>& flux,
+                              const std::vector<double>& owner_u,
+                              const std::vector<double>& neighbor_u,
+                              const std::vector<double>& normal,
+                              const std::vector<double>& coords,
+                              const double penalty_factor){};
+  virtual void AddBdryPenaltyJacobi(const int num_points,
+                                    std::vector<double>& flux_jacobi,
+                                    const std::vector<double>& owner_u,
+                                    const std::vector<double>& owner_div_u,
+                                    const std::vector<double>& neighbor_u,
+                                    const std::vector<double>& normal,
+                                    const std::vector<double>& coords,
+                                    const double& time,
+                                    const double penalty_factor){};
 
   BOUNDARY_METHODS;
 };

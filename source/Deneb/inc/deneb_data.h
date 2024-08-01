@@ -198,6 +198,9 @@ class Data {
                              std::vector<double>& phy_coords) const;
   void GetFaceCoords(const int icell, const int face_type,
                      std::vector<double>& coords) const;
+  void calWallDistance(const bool finalize, const int num_query_points,
+                       std::vector<double>& wall_distance,
+                       const std::vector<double>& query_points);
 
   inline const std::unordered_map<int, std::vector<int>>&
   GetPeriodicMatchingGlobalNodeIndex(void) const {

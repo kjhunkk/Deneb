@@ -187,6 +187,7 @@ class LaplacianPolyShockFit : public ArtificialViscosity {
   double dLmax_;
   double eps_;
   double sigma_;
+  double blackout_r_;
   std::vector<double> Se_;
   std::vector<double> distance_from_shock_;
   std::vector<double> shock_poly_coeff_;

@@ -309,6 +309,7 @@ void LaplacianPolyShockFit::BuildData(void) {
   update_period_ = std::stoi(config->GetConfigValue("ArtificialViscosity.5"));
   eps_ = std::stod(config->GetConfigValue("ArtificialViscosity.6"));
   minPts_ = std::stoi(config->GetConfigValue("ArtificialViscosity.7"));
+  blackout_r_ = std::stod(config->GetConfigValue("ArtificialViscosity.8"));
 
   if (MaxAV_ <= 0.0) {
     ERROR_MESSAGE(
@@ -403,11 +404,14 @@ void LaplacianPolyShockFit::ComputeArtificialViscosity(const double* solution,
   if (order == 0) return;
   static const int& num_cells = DENEB_DATA->GetNumCells();
   static const int& num_states = DENEB_EQUATION->GetNumStates();
+  static const int& dimension = DENEB_EQUATION->GetDimension();
   static const int& num_bases = DENEB_DATA->GetNumBases();
   static const int sb = num_states * num_bases;
   static const std::vector<double>& cell_volumes = DENEB_DATA->GetCellVolumes();
   static const std::vector<std::vector<double>>& cell_basis_value =
       DENEB_DATA->GetCellBasisValue();
+  static const std::vector<double>& cell_center_coords =
+      DENEB_DATA->GetCellCenterCoords();
   static int av_timer = 0;
 
   if (av_timer-- == 0) {
@@ -424,7 +428,16 @@ void LaplacianPolyShockFit::ComputeArtificialViscosity(const double* solution,
   for (int icell = 0; icell < num_cells; icell++) {
     const double E0 = MaxArtificialViscosity(
         &solution[icell * sb], cell_volumes[icell], cell_basis_value[icell][0]);
-    artificial_viscosity_[icell] = AVfunction(E0, distance_from_shock_[icell]);
+
+    const double x = cell_center_coords[icell * dimension];
+    const double y = cell_center_coords[icell * dimension + 1];
+    const double r = std::sqrt(x * x + y * y);
+    if (r > blackout_r_) {
+      artificial_viscosity_[icell] =
+          AVfunction(E0, distance_from_shock_[icell]);
+    } else {
+      artificial_viscosity_[icell] = 0.0;
+    }
   }
   communicate_->CommunicateBegin(&artificial_viscosity_[0]);
   communicate_->CommunicateEnd(&artificial_viscosity_[num_cells]);
