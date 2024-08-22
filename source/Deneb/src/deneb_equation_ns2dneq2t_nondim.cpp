@@ -2301,11 +2301,11 @@ void EquationNS2DNeq2Tnondim::ComputeSolutionJacobi(
       de_eev.df[i] = e_eev;
       de_eev.df[ns_ + 3] += d[i].f * Cv_eev;
     }
-    if (dim_T_eev < 250.0) {
+    if (dim_T_eev < 250.0) { // Low-temperature preconditioning
       double sum = 0.0;
       for (int i = 0; i < ns_; i++) {
         const auto Cv_eev =
-            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev + 10.0) *
+            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev + 250.0) *
             T_ref_ / e_ref_;
         sum += d[i].f * Cv_eev;
       }
@@ -3894,11 +3894,11 @@ void BoundaryNS2DNeq2Tnondim::ComputeSolutionJacobi(
       de_eev.df[i] = e_eev;
       de_eev.df[ns_ + 3] += d[i].f * Cv_eev;
     }
-    if (dim_T_eev < 250.0) {
+    if (dim_T_eev < 250.0) { // Low-temperature preconditioning
       double sum = 0.0;
       for (int i = 0; i < ns_; i++) {
         const auto Cv_eev =
-            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev + 10.0) *
+            species[i]->GetElectronicVibrationSpecificHeat(dim_T_eev + 250.0) *
             T_ref_ / e_ref_;
         sum += d[i].f * Cv_eev;
       }

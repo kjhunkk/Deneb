@@ -693,7 +693,7 @@ void LaplacianPolyShockFit::ComputeDistanceFromShock() {
       double fxdot = shock_poly_coeff_[1];
       double fxdotdot = 0.0;
 
-      for (int idegree = 2; idegree < poly_order_; idegree++) {
+      for (int idegree = 2; idegree <= poly_order_; idegree++) {
         fx += shock_poly_coeff_[idegree] * std::pow(xn, idegree);
         fxdot += static_cast<double>(idegree) * shock_poly_coeff_[idegree] *
                  std::pow(xn, idegree - 1);

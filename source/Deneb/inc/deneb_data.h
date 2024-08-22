@@ -175,6 +175,15 @@ class Data {
   template <typename T>
   void SplitData(std::vector<T>& A, std::vector<T>& B,
                    const std::vector<int>& rules);
+  double calMinimumDist2(std::shared_ptr<Jacobian>& wbdry_jacobian,
+                         const double* x);
+
+  inline double calDist2(const double* x, const double* y) const {
+    double result = 0.0;
+    for (int idim = 0; idim < dimension_; idim++)
+      result += (x[idim] - y[idim]) * (x[idim] - y[idim]);
+    return result;
+  };
 
  public:
   void BuildData(void);

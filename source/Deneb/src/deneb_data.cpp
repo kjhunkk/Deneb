@@ -1554,7 +1554,8 @@ void Data::GetFaceCoords(const int icell, const int face_type,
 void Data::calWallDistance(const bool finalize, const int num_query_points,
                            std::vector<double>& wall_distance,
                            const std::vector<double>& query_points) {
-  START();
+  START_TIMER();
+  MASTER_MESSAGE("Computing wall distance... ");
   static bool initialized = false;
   static int num_wall_bdries = -1;
   static std::vector<std::vector<double>> wall_bdry_coords;
@@ -1564,367 +1565,366 @@ void Data::calWallDistance(const bool finalize, const int num_query_points,
   static std::vector<double> wbb_center;
   static std::vector<double> wbb_radius;
 
-  if (initialized == false) {
-    initialized = true;
-    MASTER_MESSAGE("Wall distance module initialize!");
-
-    // Wall check
-    std::string boundary_type;
-    std::vector<int> wallbdry_list;
-    for (int ibdry = 0; ibdry < num_bdries_; ibdry++) {
-      CONFIG.getConfigValue("bdry(" + TO_STRING(bdry_type_[ibdry]) + ")", 0,
-                            boundary_type);
-      if (COMPARE(boundary_type, "adiabatic_wall"))
-        wallbdry_list.push_back(ibdry);
-    }
-
-    const int num_local_wallbdries = wallbdry_list.size();
-    std::vector<int> local_wallbdry_orders;
-    std::vector<int> local_wallbdry_elemtypes;
-    std::vector<int> num_nodes_per_local_wallbdry;
-    std::vector<double> local_wallbdry_coords;
-    local_wallbdry_orders.reserve(num_local_wallbdries);
-    local_wallbdry_elemtypes.reserve(num_local_wallbdries);
-    num_nodes_per_local_wallbdry.reserve(num_local_wallbdries);
-    local_wallbdry_coords.reserve(num_local_wallbdries * dimension_ *
-                                  dimension_);
-    for (auto&& ibdry : wallbdry_list) {
-      const int& owner_index = bdry_owner_cell_[ibdry];
-      const int& owner_type = bdry_owner_type_[ibdry];
-
-      std::vector<int> bdry_nodes =
-          cell_element_[owner_index]->getFacetypeNodes(
-              cell_order_[owner_index])[owner_type];
-      const int& start_index = cell_to_subnode_ptr_[owner_index];
-      for (auto&& inode : bdry_nodes)
-        inode = cell_to_subnode_ind_[start_index + inode];
-      const std::vector<double> bdry_sub_coords =
-          getCoords(&bdry_nodes[0], bdry_nodes.size());
-      const ElemType bdry_elemtype =
-          cell_element_[owner_index]->getFaceElemType(owner_type);
-
-      local_wallbdry_orders.push_back(cell_order_[owner_index]);
-      local_wallbdry_elemtypes.push_back(static_cast<int>(bdry_elemtype));
-      num_nodes_per_local_wallbdry.push_back(bdry_nodes.size());
-      for (auto&& coord : bdry_sub_coords)
-        local_wallbdry_coords.push_back(coord);
-    }
-
-    std::vector<std::vector<int>> send_data1;
-    std::vector<std::vector<int>> recv_data1;
-
-    std::vector<int> wallbdry_orders;
-    std::vector<int> wallbdry_elemtypes;
-    std::vector<int> num_nodes_per_wallbdry;
-    std::vector<double> wallbdry_coords;
-
-    send_data1.resize(NDOMAIN());
-    for (int idomain = 0; idomain < NDOMAIN(); idomain++)
-      send_data1[idomain] = local_wallbdry_orders;
-    local_wallbdry_orders.clear();
-    Header::dataCommunication(send_data1, recv_data1);
-    send_data1.clear();
-
-    for (int idomain = 0; idomain < NDOMAIN(); idomain++)
-      for (auto&& data : recv_data1[idomain]) wallbdry_orders.push_back(data);
-    recv_data1.clear();
-
-    send_data1.resize(NDOMAIN());
-    for (int idomain = 0; idomain < NDOMAIN(); idomain++)
-      send_data1[idomain] = local_wallbdry_elemtypes;
-    local_wallbdry_elemtypes.clear();
-    Header::dataCommunication(send_data1, recv_data1);
-    send_data1.clear();
-
-    for (int idomain = 0; idomain < NDOMAIN(); idomain++)
-      for (auto&& data : recv_data1[idomain])
-        wallbdry_elemtypes.push_back(data);
-    recv_data1.clear();
-
-    send_data1.resize(NDOMAIN());
-    for (int idomain = 0; idomain < NDOMAIN(); idomain++)
-      send_data1[idomain] = num_nodes_per_local_wallbdry;
-    num_nodes_per_local_wallbdry.clear();
-    Header::dataCommunication(send_data1, recv_data1);
-    send_data1.clear();
-
-    for (int idomain = 0; idomain < NDOMAIN(); idomain++)
-      for (auto&& data : recv_data1[idomain])
-        num_nodes_per_wallbdry.push_back(data);
-    recv_data1.clear();
-
-    std::vector<std::vector<double>> send_data2;
-    std::vector<std::vector<double>> recv_data2;
-
-    send_data2.resize(NDOMAIN());
-    for (int idomain = 0; idomain < NDOMAIN(); idomain++)
-      send_data2[idomain] = local_wallbdry_coords;
-    local_wallbdry_coords.clear();
-    Header::dataCommunication(send_data2, recv_data2);
-    send_data2.clear();
-
-    for (int idomain = 0; idomain < NDOMAIN(); idomain++)
-      for (auto&& data : recv_data2[idomain]) wallbdry_coords.push_back(data);
-    recv_data2.clear();
-
-    num_wall_bdries = wallbdry_elemtypes.size();
-    wall_bdry_coords.resize(num_wall_bdries);
-    wall_bdry_jacobians.resize(num_wall_bdries);
-    int start_ind = 0;
-    for (int ibdry = 0; ibdry < num_wall_bdries; ibdry++) {
-      std::shared_ptr<Jacobian> bdry_jacobian =
-          JacobianFactory::getFaceJacobian(
-              static_cast<ElemType>(wallbdry_elemtypes[ibdry]),
-              wallbdry_orders[ibdry]);
-
-      wall_bdry_coords[ibdry].assign(
-          wallbdry_coords.begin() + start_ind,
-          wallbdry_coords.begin() + start_ind +
-              dimension_ * num_nodes_per_wallbdry[ibdry]);
-      start_ind += (dimension_ * num_nodes_per_wallbdry[ibdry]);
-      bdry_jacobian->setCoords(wall_bdry_coords[ibdry]);
-      bdry_jacobian->setTopology();
-
-      wall_bdry_jacobians[ibdry] = bdry_jacobian;
-    }
-    wallbdry_orders.clear();
-    wallbdry_elemtypes.clear();
-    num_nodes_per_wallbdry.clear();
-    wallbdry_coords.clear();
-
-    // wall bounding box
-    std::vector<double> min_wcoord(dimension_, 1.0e+10);
-    std::vector<double> max_wcoord(dimension_, -1.0e+10);
-    for (auto&& coords : wall_bdry_coords) {
-      for (int inode = 0; inode < coords.size() / dimension_; inode++) {
-        for (int idim = 0; idim < dimension_; idim++) {
-          min_wcoord[idim] =
-              std::min(min_wcoord[idim], coords[dimension_ * inode + idim]);
-          max_wcoord[idim] =
-              std::max(max_wcoord[idim], coords[dimension_ * inode + idim]);
-        }
-      }
-    }
-
-    const int nwpart = 20;  // input
-    std::vector<int> nwwet(dimension_);
-    for (int idim = 0; idim < dimension_; idim++)
-      nwwet[idim] = std::pow(nwpart, idim);
-    std::vector<double> hw(dimension_);
-    for (int idim = 0; idim < dimension_; idim++)
-      hw[idim] =
-          (max_wcoord[idim] - min_wcoord[idim]) / static_cast<double>(nwpart);
-
-    // wall bounding box (local)
-    wbb_to_wbdry.resize(std::pow(nwpart, dimension_));
-    for (int ibdry = 0; ibdry < num_wall_bdries; ibdry++) {
-      const std::vector<double>& coords = wall_bdry_coords[ibdry];
-      int wbb_tag = 0;
-      for (int idim = 0; idim < dimension_; idim++) {
-        int loc = std::floor((coords[idim] - min_wcoord[idim]) / hw[idim]);
-        if (loc == nwpart) loc--;
-        wbb_tag += loc * nwwet[idim];
-      }
-      wbb_to_wbdry[wbb_tag].push_back(ibdry);
-    }
-
-    std::vector<std::vector<int>> temp;
-    for (auto&& wbdry_list : wbb_to_wbdry)
-      if (wbdry_list.size() != 0) temp.push_back(wbdry_list);
-    wbb_to_wbdry = move(temp);
-    num_wbb = wbb_to_wbdry.size();
-
-    min_wcoord.clear();
-    max_wcoord.clear();
-    hw.clear();
-    min_wcoord.resize(dimension_ * num_wbb, 1.0e+100);
-    max_wcoord.resize(dimension_ * num_wbb, -1.0e+100);
-    hw.resize(dimension_ * num_wbb);
-    wbb_center.resize(dimension_ * num_wbb);
-    wbb_radius.resize(num_wbb);
-    for (int iwbb = 0; iwbb < num_wbb; iwbb++) {
-      const std::vector<int>& wbdry_list = wbb_to_wbdry[iwbb];
-      for (auto&& ibdry : wbdry_list) {
-        const std::vector<double> coords = wall_bdry_coords[ibdry];
-        for (int inode = 0; inode < coords.size() / dimension_; inode++) {
-          for (int idim = 0; idim < dimension_; idim++) {
-            min_wcoord[iwbb * dimension_ + idim] =
-                std::min(min_wcoord[iwbb * dimension_ + idim],
-                         coords[dimension_ * inode + idim]);
-            max_wcoord[iwbb * dimension_ + idim] =
-                std::max(max_wcoord[iwbb * dimension_ + idim],
-                         coords[dimension_ * inode + idim]);
-          }
-        }
-      }
-      for (int idim = 0; idim < dimension_; idim++) {
-        hw[iwbb * dimension_ + idim] = max_wcoord[iwbb * dimension_ + idim] -
-                                       min_wcoord[iwbb * dimension_ + idim];
-        wbb_center[iwbb * dimension_ + idim] =
-            0.5 * (max_wcoord[iwbb * dimension_ + idim] +
-                   min_wcoord[iwbb * dimension_ + idim]);
-      }
-      wbb_radius[iwbb] = std::sqrt(calDist2(&max_wcoord[iwbb * dimension_],
-                                            &min_wcoord[iwbb * dimension_])) *
-                         0.5;
-    }
-
-    // for debug
-    /*if (MYRANK() == MASTER_NODE) {
-            const int npost = 20;
-            std::vector<double> coords(npost*dimension_);
-            std::vector<double> xstart(dimension_);
-            std::vector<double> xend(dimension_);
-            std::ofstream fout("wbb" + TO_STRING(MYRANK()) + ".dat");
-            for (int iwbb = 0; iwbb < num_wbb; iwbb++) {
-                    if (dimension_ == 2) {
-                            const double& x1 = min_wcoord[iwbb*dimension_ + 0];
-                            const double& y1 = min_wcoord[iwbb*dimension_ + 1];
-                            const double& x2 = max_wcoord[iwbb*dimension_ + 0];
-                            const double& y2 = max_wcoord[iwbb*dimension_ + 1];
-                            const double& c1 = wbb_center[iwbb*dimension_ + 0];
-                            const double& c2 = wbb_center[iwbb*dimension_ + 1];
-                            const double& r = wbb_radius[iwbb];
-
-                            for (int iline = 0; iline < 6; iline++) {
-                                    switch (iline) {
-                                    case 0:	xstart = { x1, y1 }; xend = { x1,
-    y2 }; break; case 1:	xstart = { x1, y1 }; xend = { x2, y1 }; break;
-                                    case 2:	xstart = { x1, y2 }; xend = { x2,
-    y2 }; break; case 3:	xstart = { x2, y1 }; xend = { x2, y2 }; break;
-                                    case 4:	xstart = { c1, c2 }; xend = { c1
-    + r, c2 }; break; case 5:	xstart = { c1, c2 }; xend = { c1, c2 + r };
-    break;
-                                    }
-                                    makeLine(&coords[0], &xstart[0], &xend[0],
-    npost); for (int i = 0; i < npost; i++) { for (int idim = 0; idim <
-    dimension_; idim++) fout << coords[i*dimension_ + idim] << "\t"; fout <<
-    iwbb << std::endl;
-                                    }
-                            }
-                    }
-                    if (dimension_ == 3) {
-                            const double& x1 = min_wcoord[iwbb*dimension_ + 0];
-                            const double& y1 = min_wcoord[iwbb*dimension_ + 1];
-                            const double& z1 = min_wcoord[iwbb*dimension_ + 2];
-                            const double& x2 = max_wcoord[iwbb*dimension_ + 0];
-                            const double& y2 = max_wcoord[iwbb*dimension_ + 1];
-                            const double& z2 = max_wcoord[iwbb*dimension_ + 2];
-                            const double& c1 = wbb_center[iwbb*dimension_ + 0];
-                            const double& c2 = wbb_center[iwbb*dimension_ + 1];
-                            const double& c3 = wbb_center[iwbb*dimension_ + 2];
-                            const double& r = wbb_radius[iwbb];
-
-                            for (int iline = 0; iline < 15; iline++) {
-                                    switch (iline) {
-                                    case 0:	xstart = { x1, y1, z1 }; xend = {
-    x1, y2, z1 }; break;
-                                    case 1:	xstart = { x1, y1, z1 }; xend = {
-    x2, y1, z1 }; break;
-                                    case 2:	xstart = { x1, y2, z1 }; xend = {
-    x2, y2, z1 }; break;
-                                    case 3:	xstart = { x2, y1, z1 }; xend = {
-    x2, y2, z1 }; break;
-                                    case 4:	xstart = { x1, y1, z2 }; xend = {
-    x1, y2, z2 }; break;
-                                    case 5:	xstart = { x1, y1, z2 }; xend = {
-    x2, y1, z2 }; break;
-                                    case 6:	xstart = { x1, y2, z2 }; xend = {
-    x2, y2, z2 }; break;
-                                    case 7:	xstart = { x2, y1, z2 }; xend = {
-    x2, y2, z2 }; break;
-                                    case 8:	xstart = { x1, y1, z1 }; xend = {
-    x1, y1, z2 }; break;
-                                    case 9:	xstart = { x1, y2, z1 }; xend = {
-    x1, y2, z2 }; break; case 10: xstart = { x2, y1, z1 }; xend = { x2, y1, z2
-    }; break; case 11: xstart = { x2, y2, z1 }; xend = { x2, y2, z2 }; break;
-                                    case 12: xstart = { c1, c2, c3 }; xend = {
-    c1 + r, c2, c3 }; break; case 13: xstart = { c1, c2, c3 }; xend = { c1, c2 +
-    r, c3 }; break; case 14: xstart = { c1, c2, c3 }; xend = { c1, c2, c3 + r };
-    break;
-                                    }
-                                    makeLine(&coords[0], &xstart[0], &xend[0],
-    npost); for (int i = 0; i < npost; i++) { for (int idim = 0; idim <
-    dimension_; idim++) fout << coords[i*dimension_ + idim] << "\t"; fout <<
-    iwbb << std::endl;
-                                    }
-                            }
-                    }
-            }
-            fout.close();
-    }*/
-    // end for debug
-  }
-
-  if (num_wall_bdries == 0) {
-    wall_distance.resize(num_query_points, 1.0e+100);
-  } else {
-    // query point search
-    wall_distance.resize(num_query_points);
-    std::vector<double> max_dist_to_wbb(num_wbb);
-    for (int ipoint = 0; ipoint < num_query_points; ipoint++) {
-      const double* coord = &query_points[ipoint * dimension_];
-
-      for (int iwbb = 0; iwbb < num_wbb; iwbb++)
-        max_dist_to_wbb[iwbb] =
-            std::sqrt(calDist2(&wbb_center[iwbb * dimension_], coord)) +
-            wbb_radius[iwbb];
-      const double max_dist =
-          *std::max_element(max_dist_to_wbb.begin(), max_dist_to_wbb.end());
-
-      double min_dist2 = 1.0e+100;
-      std::vector<int> bdry_candidates;
-      for (int iwbb = 0; iwbb < num_wbb; iwbb++) {
-        if (max_dist < max_dist_to_wbb[iwbb] - 2.0 * wbb_radius[iwbb]) continue;
-        for (auto&& ibdry : wbb_to_wbdry[iwbb]) {
-          const std::vector<double>& bdry_coords = wall_bdry_coords[ibdry];
-          const int num_node = bdry_coords.size() / dimension_;
-
-          double min_dist2_local = 1.0e+10;
-          for (int inode = 0; inode < num_node; inode++) {
-            const double dist2 =
-                calDist2(&bdry_coords[inode * dimension_], coord);
-            if (dist2 < min_dist2_local) min_dist2_local = dist2;
-          }
-
-          if (std::abs(min_dist2_local - min_dist2) < 1.0e-8) {
-            bdry_candidates.push_back(ibdry);
-          } else if (min_dist2_local < min_dist2) {
-            min_dist2 = min_dist2_local;
-            bdry_candidates.clear();
-            bdry_candidates.push_back(ibdry);
-          }
-        }
-      }
-
-      for (auto&& ibdry : bdry_candidates) {
-        const double dist2 = calMinimumDist2(wall_bdry_jacobians[ibdry], coord);
-        min_dist2 = std::min(min_dist2, dist2);
-      }
-
-      wall_distance[ipoint] = std::sqrt(min_dist2);
-    }
-  }
-
-  if (finalize == true) {
-    num_wall_bdries = -1;
-    wall_bdry_coords.clear();
-    wall_bdry_jacobians.clear();
-    num_wbb = -1;
-    wbb_to_wbdry.clear();
-    wbb_center.clear();
-    wbb_radius.clear();
-    initialized = false;
-    MASTER_MESSAGE("Wall distance module finalize!");
-  }
-
-  SYNCRO();
-  MASTER_MESSAGE("Wall distance is computed! (Time: " + TO_STRING(STOP()) +
-                 "s)");
-  int num_global_query_points;
-  MPI_Allreduce(&num_query_points, &num_global_query_points, 1, MPI_INT,
-                MPI_SUM, MPI_COMM_WORLD);
-  MASTER_MESSAGE("The number of query points: " +
-                 TO_STRING(num_global_query_points));
+//  if (initialized == false) {
+//    initialized = true;
+//    MASTER_MESSAGE("Wall distance module initialize!\n");
+//
+//    // Wall check
+//    std::string boundary_type;
+//    std::vector<int> wallbdry_list;
+//    for (int ibdry = 0; ibdry < num_bdries_; ibdry++) {
+//      CONFIG.getConfigValue("bdry(" + TO_STRING(bdry_type_[ibdry]) + ")", 0,
+//                            boundary_type);
+//      if (COMPARE(boundary_type, "adiabatic_wall"))
+//        wallbdry_list.push_back(ibdry);
+//    }
+//
+//    const int num_local_wallbdries = wallbdry_list.size();
+//    std::vector<int> local_wallbdry_orders;
+//    std::vector<int> local_wallbdry_elemtypes;
+//    std::vector<int> num_nodes_per_local_wallbdry;
+//    std::vector<double> local_wallbdry_coords;
+//    local_wallbdry_orders.reserve(num_local_wallbdries);
+//    local_wallbdry_elemtypes.reserve(num_local_wallbdries);
+//    num_nodes_per_local_wallbdry.reserve(num_local_wallbdries);
+//    local_wallbdry_coords.reserve(num_local_wallbdries * dimension_ *
+//                                  dimension_);
+//    for (auto&& ibdry : wallbdry_list) {
+//      const int& owner_index = bdry_owner_cell_[ibdry];
+//      const int& owner_type = bdry_owner_type_[ibdry];
+//
+//      std::vector<int> bdry_nodes =
+//          cell_element_[owner_index]->getFacetypeNodes(
+//              cell_order_[owner_index])[owner_type];
+//      const int& start_index = cell_to_subnode_ptr_[owner_index];
+//      for (auto&& inode : bdry_nodes)
+//        inode = cell_to_subnode_ind_[start_index + inode];
+//      const std::vector<double> bdry_sub_coords =
+//          getCoords(&bdry_nodes[0], bdry_nodes.size());
+//      const ElemType bdry_elemtype =
+//          cell_element_[owner_index]->getFaceElemType(owner_type);
+//
+//      local_wallbdry_orders.push_back(cell_order_[owner_index]);
+//      local_wallbdry_elemtypes.push_back(static_cast<int>(bdry_elemtype));
+//      num_nodes_per_local_wallbdry.push_back(bdry_nodes.size());
+//      for (auto&& coord : bdry_sub_coords)
+//        local_wallbdry_coords.push_back(coord);
+//    }
+//
+//    std::vector<std::vector<int>> send_data1;
+//    std::vector<std::vector<int>> recv_data1;
+//
+//    std::vector<int> wallbdry_orders;
+//    std::vector<int> wallbdry_elemtypes;
+//    std::vector<int> num_nodes_per_wallbdry;
+//    std::vector<double> wallbdry_coords;
+//
+//    send_data1.resize(NDOMAIN);
+//    for (int idomain = 0; idomain < NDOMAIN; idomain++)
+//      send_data1[idomain] = local_wallbdry_orders;
+//    local_wallbdry_orders.clear();
+//    Header::dataCommunication(send_data1, recv_data1);
+//    send_data1.clear();
+//
+//    for (int idomain = 0; idomain < NDOMAIN; idomain++)
+//      for (auto&& data : recv_data1[idomain]) wallbdry_orders.push_back(data);
+//    recv_data1.clear();
+//
+//    send_data1.resize(NDOMAIN);
+//    for (int idomain = 0; idomain < NDOMAIN; idomain++)
+//      send_data1[idomain] = local_wallbdry_elemtypes;
+//    local_wallbdry_elemtypes.clear();
+//    Header::dataCommunication(send_data1, recv_data1);
+//    send_data1.clear();
+//
+//    for (int idomain = 0; idomain < NDOMAIN; idomain++)
+//      for (auto&& data : recv_data1[idomain])
+//        wallbdry_elemtypes.push_back(data);
+//    recv_data1.clear();
+//
+//    send_data1.resize(NDOMAIN);
+//    for (int idomain = 0; idomain < NDOMAIN; idomain++)
+//      send_data1[idomain] = num_nodes_per_local_wallbdry;
+//    num_nodes_per_local_wallbdry.clear();
+//    Header::dataCommunication(send_data1, recv_data1);
+//    send_data1.clear();
+//
+//    for (int idomain = 0; idomain < NDOMAIN; idomain++)
+//      for (auto&& data : recv_data1[idomain])
+//        num_nodes_per_wallbdry.push_back(data);
+//    recv_data1.clear();
+//
+//    std::vector<std::vector<double>> send_data2;
+//    std::vector<std::vector<double>> recv_data2;
+//
+//    send_data2.resize(NDOMAIN);
+//    for (int idomain = 0; idomain < NDOMAIN; idomain++)
+//      send_data2[idomain] = local_wallbdry_coords;
+//    local_wallbdry_coords.clear();
+//    Header::dataCommunication(send_data2, recv_data2);
+//    send_data2.clear();
+//
+//    for (int idomain = 0; idomain < NDOMAIN; idomain++)
+//      for (auto&& data : recv_data2[idomain]) wallbdry_coords.push_back(data);
+//    recv_data2.clear();
+//
+//    num_wall_bdries = wallbdry_elemtypes.size();
+//    wall_bdry_coords.resize(num_wall_bdries);
+//    wall_bdry_jacobians.resize(num_wall_bdries);
+//    int start_ind = 0;
+//    for (int ibdry = 0; ibdry < num_wall_bdries; ibdry++) {
+//      std::shared_ptr<Jacobian> bdry_jacobian =
+//          JacobianFactory::getFaceJacobian(
+//              static_cast<ElemType>(wallbdry_elemtypes[ibdry]),
+//              wallbdry_orders[ibdry]);
+//
+//      wall_bdry_coords[ibdry].assign(
+//          wallbdry_coords.begin() + start_ind,
+//          wallbdry_coords.begin() + start_ind +
+//              dimension_ * num_nodes_per_wallbdry[ibdry]);
+//      start_ind += (dimension_ * num_nodes_per_wallbdry[ibdry]);
+//      bdry_jacobian->setCoords(wall_bdry_coords[ibdry]);
+//      bdry_jacobian->setTopology();
+//
+//      wall_bdry_jacobians[ibdry] = bdry_jacobian;
+//    }
+//    wallbdry_orders.clear();
+//    wallbdry_elemtypes.clear();
+//    num_nodes_per_wallbdry.clear();
+//    wallbdry_coords.clear();
+//
+//    // wall bounding box
+//    std::vector<double> min_wcoord(dimension_, 1.0e+10);
+//    std::vector<double> max_wcoord(dimension_, -1.0e+10);
+//    for (auto&& coords : wall_bdry_coords) {
+//      for (int inode = 0; inode < coords.size() / dimension_; inode++) {
+//        for (int idim = 0; idim < dimension_; idim++) {
+//          min_wcoord[idim] =
+//              std::min(min_wcoord[idim], coords[dimension_ * inode + idim]);
+//          max_wcoord[idim] =
+//              std::max(max_wcoord[idim], coords[dimension_ * inode + idim]);
+//        }
+//      }
+//    }
+//
+//    const int nwpart = 20;  // input
+//    std::vector<int> nwwet(dimension_);
+//    for (int idim = 0; idim < dimension_; idim++)
+//      nwwet[idim] = std::pow(nwpart, idim);
+//    std::vector<double> hw(dimension_);
+//    for (int idim = 0; idim < dimension_; idim++)
+//      hw[idim] =
+//          (max_wcoord[idim] - min_wcoord[idim]) / static_cast<double>(nwpart);
+//
+//    // wall bounding box (local)
+//    wbb_to_wbdry.resize(std::pow(nwpart, dimension_));
+//    for (int ibdry = 0; ibdry < num_wall_bdries; ibdry++) {
+//      const std::vector<double>& coords = wall_bdry_coords[ibdry];
+//      int wbb_tag = 0;
+//      for (int idim = 0; idim < dimension_; idim++) {
+//        int loc = std::floor((coords[idim] - min_wcoord[idim]) / hw[idim]);
+//        if (loc == nwpart) loc--;
+//        wbb_tag += loc * nwwet[idim];
+//      }
+//      wbb_to_wbdry[wbb_tag].push_back(ibdry);
+//    }
+//
+//    std::vector<std::vector<int>> temp;
+//    for (auto&& wbdry_list : wbb_to_wbdry)
+//      if (wbdry_list.size() != 0) temp.push_back(wbdry_list);
+//    wbb_to_wbdry = move(temp);
+//    num_wbb = wbb_to_wbdry.size();
+//
+//    min_wcoord.clear();
+//    max_wcoord.clear();
+//    hw.clear();
+//    min_wcoord.resize(dimension_ * num_wbb, 1.0e+100);
+//    max_wcoord.resize(dimension_ * num_wbb, -1.0e+100);
+//    hw.resize(dimension_ * num_wbb);
+//    wbb_center.resize(dimension_ * num_wbb);
+//    wbb_radius.resize(num_wbb);
+//    for (int iwbb = 0; iwbb < num_wbb; iwbb++) {
+//      const std::vector<int>& wbdry_list = wbb_to_wbdry[iwbb];
+//      for (auto&& ibdry : wbdry_list) {
+//        const std::vector<double> coords = wall_bdry_coords[ibdry];
+//        for (int inode = 0; inode < coords.size() / dimension_; inode++) {
+//          for (int idim = 0; idim < dimension_; idim++) {
+//            min_wcoord[iwbb * dimension_ + idim] =
+//                std::min(min_wcoord[iwbb * dimension_ + idim],
+//                         coords[dimension_ * inode + idim]);
+//            max_wcoord[iwbb * dimension_ + idim] =
+//                std::max(max_wcoord[iwbb * dimension_ + idim],
+//                         coords[dimension_ * inode + idim]);
+//          }
+//        }
+//      }
+//      for (int idim = 0; idim < dimension_; idim++) {
+//        hw[iwbb * dimension_ + idim] = max_wcoord[iwbb * dimension_ + idim] -
+//                                       min_wcoord[iwbb * dimension_ + idim];
+//        wbb_center[iwbb * dimension_ + idim] =
+//            0.5 * (max_wcoord[iwbb * dimension_ + idim] +
+//                   min_wcoord[iwbb * dimension_ + idim]);
+//      }
+//      wbb_radius[iwbb] = std::sqrt(calDist2(&max_wcoord[iwbb * dimension_],
+//                                            &min_wcoord[iwbb * dimension_])) *
+//                         0.5;
+//    }
+//
+//    // for debug
+//    /*if (MYRANK() == MASTER_NODE) {
+//            const int npost = 20;
+//            std::vector<double> coords(npost*dimension_);
+//            std::vector<double> xstart(dimension_);
+//            std::vector<double> xend(dimension_);
+//            std::ofstream fout("wbb" + TO_STRING(MYRANK()) + ".dat");
+//            for (int iwbb = 0; iwbb < num_wbb; iwbb++) {
+//                    if (dimension_ == 2) {
+//                            const double& x1 = min_wcoord[iwbb*dimension_ + 0];
+//                            const double& y1 = min_wcoord[iwbb*dimension_ + 1];
+//                            const double& x2 = max_wcoord[iwbb*dimension_ + 0];
+//                            const double& y2 = max_wcoord[iwbb*dimension_ + 1];
+//                            const double& c1 = wbb_center[iwbb*dimension_ + 0];
+//                            const double& c2 = wbb_center[iwbb*dimension_ + 1];
+//                            const double& r = wbb_radius[iwbb];
+//
+//                            for (int iline = 0; iline < 6; iline++) {
+//                                    switch (iline) {
+//                                    case 0:	xstart = { x1, y1 }; xend = { x1,
+//    y2 }; break; case 1:	xstart = { x1, y1 }; xend = { x2, y1 }; break;
+//                                    case 2:	xstart = { x1, y2 }; xend = { x2,
+//    y2 }; break; case 3:	xstart = { x2, y1 }; xend = { x2, y2 }; break;
+//                                    case 4:	xstart = { c1, c2 }; xend = { c1
+//    + r, c2 }; break; case 5:	xstart = { c1, c2 }; xend = { c1, c2 + r };
+//    break;
+//                                    }
+//                                    makeLine(&coords[0], &xstart[0], &xend[0],
+//    npost); for (int i = 0; i < npost; i++) { for (int idim = 0; idim <
+//    dimension_; idim++) fout << coords[i*dimension_ + idim] << "\t"; fout <<
+//    iwbb << std::endl;
+//                                    }
+//                            }
+//                    }
+//                    if (dimension_ == 3) {
+//                            const double& x1 = min_wcoord[iwbb*dimension_ + 0];
+//                            const double& y1 = min_wcoord[iwbb*dimension_ + 1];
+//                            const double& z1 = min_wcoord[iwbb*dimension_ + 2];
+//                            const double& x2 = max_wcoord[iwbb*dimension_ + 0];
+//                            const double& y2 = max_wcoord[iwbb*dimension_ + 1];
+//                            const double& z2 = max_wcoord[iwbb*dimension_ + 2];
+//                            const double& c1 = wbb_center[iwbb*dimension_ + 0];
+//                            const double& c2 = wbb_center[iwbb*dimension_ + 1];
+//                            const double& c3 = wbb_center[iwbb*dimension_ + 2];
+//                            const double& r = wbb_radius[iwbb];
+//
+//                            for (int iline = 0; iline < 15; iline++) {
+//                                    switch (iline) {
+//                                    case 0:	xstart = { x1, y1, z1 }; xend = {
+//    x1, y2, z1 }; break;
+//                                    case 1:	xstart = { x1, y1, z1 }; xend = {
+//    x2, y1, z1 }; break;
+//                                    case 2:	xstart = { x1, y2, z1 }; xend = {
+//    x2, y2, z1 }; break;
+//                                    case 3:	xstart = { x2, y1, z1 }; xend = {
+//    x2, y2, z1 }; break;
+//                                    case 4:	xstart = { x1, y1, z2 }; xend = {
+//    x1, y2, z2 }; break;
+//                                    case 5:	xstart = { x1, y1, z2 }; xend = {
+//    x2, y1, z2 }; break;
+//                                    case 6:	xstart = { x1, y2, z2 }; xend = {
+//    x2, y2, z2 }; break;
+//                                    case 7:	xstart = { x2, y1, z2 }; xend = {
+//    x2, y2, z2 }; break;
+//                                    case 8:	xstart = { x1, y1, z1 }; xend = {
+//    x1, y1, z2 }; break;
+//                                    case 9:	xstart = { x1, y2, z1 }; xend = {
+//    x1, y2, z2 }; break; case 10: xstart = { x2, y1, z1 }; xend = { x2, y1, z2
+//    }; break; case 11: xstart = { x2, y2, z1 }; xend = { x2, y2, z2 }; break;
+//                                    case 12: xstart = { c1, c2, c3 }; xend = {
+//    c1 + r, c2, c3 }; break; case 13: xstart = { c1, c2, c3 }; xend = { c1, c2 +
+//    r, c3 }; break; case 14: xstart = { c1, c2, c3 }; xend = { c1, c2, c3 + r };
+//    break;
+//                                    }
+//                                    makeLine(&coords[0], &xstart[0], &xend[0],
+//    npost); for (int i = 0; i < npost; i++) { for (int idim = 0; idim <
+//    dimension_; idim++) fout << coords[i*dimension_ + idim] << "\t"; fout <<
+//    iwbb << std::endl;
+//                                    }
+//                            }
+//                    }
+//            }
+//            fout.close();
+//    }*/
+//    // end for debug
+//  }
+//
+//  if (num_wall_bdries == 0) {
+//    wall_distance.resize(num_query_points, 1.0e+100);
+//  } else {
+//    // query point search
+//    wall_distance.resize(num_query_points);
+//    std::vector<double> max_dist_to_wbb(num_wbb);
+//    for (int ipoint = 0; ipoint < num_query_points; ipoint++) {
+//      const double* coord = &query_points[ipoint * dimension_];
+//
+//      for (int iwbb = 0; iwbb < num_wbb; iwbb++)
+//        max_dist_to_wbb[iwbb] =
+//            std::sqrt(calDist2(&wbb_center[iwbb * dimension_], coord)) +
+//            wbb_radius[iwbb];
+//      const double max_dist =
+//          *std::max_element(max_dist_to_wbb.begin(), max_dist_to_wbb.end());
+//
+//      double min_dist2 = 1.0e+100;
+//      std::vector<int> bdry_candidates;
+//      for (int iwbb = 0; iwbb < num_wbb; iwbb++) {
+//        if (max_dist < max_dist_to_wbb[iwbb] - 2.0 * wbb_radius[iwbb]) continue;
+//        for (auto&& ibdry : wbb_to_wbdry[iwbb]) {
+//          const std::vector<double>& bdry_coords = wall_bdry_coords[ibdry];
+//          const int num_node = bdry_coords.size() / dimension_;
+//
+//          double min_dist2_local = 1.0e+10;
+//          for (int inode = 0; inode < num_node; inode++) {
+//            const double dist2 =
+//                calDist2(&bdry_coords[inode * dimension_], coord);
+//            if (dist2 < min_dist2_local) min_dist2_local = dist2;
+//          }
+//
+//          if (std::abs(min_dist2_local - min_dist2) < 1.0e-8) {
+//            bdry_candidates.push_back(ibdry);
+//          } else if (min_dist2_local < min_dist2) {
+//            min_dist2 = min_dist2_local;
+//            bdry_candidates.clear();
+//            bdry_candidates.push_back(ibdry);
+//          }
+//        }
+//      }
+//
+//      for (auto&& ibdry : bdry_candidates) {
+//        const double dist2 = calMinimumDist2(wall_bdry_jacobians[ibdry], coord);
+//        min_dist2 = std::min(min_dist2, dist2);
+//      }
+//
+//      wall_distance[ipoint] = std::sqrt(min_dist2);
+//    }
+//  }
+//
+//  if (finalize == true) {
+//    num_wall_bdries = -1;
+//    wall_bdry_coords.clear();
+//    wall_bdry_jacobians.clear();
+//    num_wbb = -1;
+//    wbb_to_wbdry.clear();
+//    wbb_center.clear();
+//    wbb_radius.clear();
+//    initialized = false;
+//    MASTER_MESSAGE("Wall distance module finalize!\n");
+//  }
+//
+//  SYNCRO();
+//  MASTER_MESSAGE("Complete. (Time: " + std::to_string(STOP_TIMER()) + "s)\n");
+//  int num_global_query_points;
+//  MPI_Allreduce(&num_query_points, &num_global_query_points, 1, MPI_INT,
+//                MPI_SUM, MPI_COMM_WORLD);
+//  MASTER_MESSAGE("The number of query points: " +
+//                 std::to_string(num_global_query_points) + "\n");
 }
 }  // namespace deneb
