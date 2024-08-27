@@ -1,0 +1,112 @@
+// Modified Sod's test by artificial viscosity
+
+ResourceDir = &(PWD)resource/
+ReturnDir = &(PWD)Results/Dragonfly_Isothermal_Axi_v2_P4/
+MixtureFile = &(PWD)resource/Neq2T/mixture_Titan19.yml
+
+Order = 4
+FluxOrder = [&(Order)+1], [&(Order)+1]
+MassMatrixOrder = 0
+
+Grid = Gmsh, &(PWD)grids/dragonfly_HOM_v2_2D.msh
+CharacteristicLength = 1.0
+GenGmshXOptions = 0.0, 1.0, 6, 71, 72
+GenGmshYOptions = 0.0, 1.0, 6, 3, 3
+
+Restart = On, &(PWD)Results/Dragonfly_Isothermal_Axi_v2_P0/save/Iter17381.SAVE
+Stop = Iter, 10000000
+PostOrder = [&(Order)+1], 0
+Post = Iter, 0, -1, 1000
+Save = Iter, 0, -1, 1000
+MaxIter = 10000000
+
+rho_N2 = 3.51E-4
+rho_CH4 = 4.52E-6
+rho_N = 0.0
+rho_C2 = 0.0
+rho_CH3 = 0.0
+rho_CH2 = 0.0
+rho_CH = 0.0
+rho_H2 = 0.0
+rho_C = 0.0
+rho_NH = 0.0
+rho_HCN = 0.0
+rho_CN = 0.0
+rho_H = 0.0
+rho_N2p = 0.0
+rho_CNp = 0.0
+rho_Np = 0.0
+rho_Cp = 0.0
+rho_Hp = 0.0
+rho_e = 0.0
+T_tr = 162.0
+T_eev = 162.0
+velocity = 6350.0
+Twall = 1600.0
+
+L_ref = 1.0
+rho_ref = 8.03E-4
+T_ref = 162.0
+v_ref = 6350.0
+
+Equation = NS2DNeq2Taxinondim, LLF
+Problem = FreeStream
+// ProblemInput = 2.0, 0.0
+ProblemInput = &(rho_N2), &(rho_CH4), &(rho_N), &(rho_C2), &(rho_CH3), &(rho_CH2), &(rho_CH), &(rho_H2), &(rho_C), &(rho_NH), &(rho_HCN), &(rho_CN), &(rho_H), &(rho_N2p),&(rho_CNp),&(rho_Np),&(rho_Cp),&(rho_Hp),&(rho_e), &(velocity), 0.0, &(T_tr), &(T_eev)
+Timescheme = Steady
+IncreaseCFL = 1000, 1.0, 1.0
+SteadyConvergenceTol = 1.0E-8
+Timestep = CFL, 0.01
+GMRES = 10, 1.0e-4, 1000
+TimeResolution = 11
+
+Limiter = None
+Sgain = 0.29
+Pgain = 0.0095
+Igain = 1.5
+Dgain = 0.000004
+Ducros = Off
+// ArtificialViscosity = SPID, &(Sgain), &(Pgain), &(Igain), &(Dgain), &(Ducros)
+PecletNumber = 4.0
+Kappa = 4.0
+// ArtificialViscosity = LaplacianP0All, &(PecletNumber), &(Kappa)
+// ArtificialViscosity = None
+Pressurefix = Off
+RollBack = 1, None, 0
+
+// ArtificialViscosity with shock fit
+MaxAV = 0.00005
+S0 = -6.0 // -6.0
+sigma = 0.01
+poly_order = 4
+update_period = -1
+eps = 0.03 // 0.03
+minPts = 7 // 7
+WallAV = 0.0001
+ArtificialViscosity = LaplacianPolyShockFit, &(MaxAV), &(S0), &(sigma), &(poly_order), &(update_period), &(eps), &(minPts), 0.0
+
+Gamma = 1.4
+Re = 200000 // negative value
+Ma = 1.5 // dummay
+Pr = 0.72 // dummay
+
+WallScale = 1.0
+// BoundaryPenalty = 0.1
+// ViscousScaling = 1.0
+
+// Bdry(3) = Farfield, Inflow
+Bdry(3) = SupersonicInflow, Inflow
+BdryInput(3) = &(rho_N2), &(rho_CH4), &(rho_N), &(rho_C2), &(rho_CH3), &(rho_CH2), &(rho_CH), &(rho_H2), &(rho_C), &(rho_NH), &(rho_HCN), &(rho_CN), &(rho_H), &(rho_N2p),&(rho_CNp),&(rho_Np),&(rho_Cp),&(rho_Hp),&(rho_e), &(velocity), 0.0, &(T_tr), &(T_eev)
+Bdry(4) = SupersonicOutflow, Outflow
+BdryInput(4) = 1.0
+Bdry(5) = SlipWall, Slip
+BdryInput(5) = &(WallScale)
+Bdry(6) = AxiSymmetry, Symmetry
+Bdry(8) = IsothermalWall, Wall
+BdryInput(8) = &(WallScale), &(Twall)
+
+Matching = 70
+XPeriodic = 71, 72, 1.0
+YPeriodic = 81, 82, 1.0
+ZPeriodic = 91, 92, 6.283185308
+

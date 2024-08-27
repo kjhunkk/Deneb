@@ -1,0 +1,106 @@
+// Modified Sod's test by artificial viscosity
+
+ResourceDir = &(PWD)resource/
+ReturnDir = &(PWD)Results/LENS-XX_Isothermal_Axi_v6_P5_penalty_Gupta/
+MixtureFile = &(PWD)resource/Neq2T/mixture_Air5.yml
+
+Order = 5
+FluxOrder = [&(Order)+1], [&(Order)+1]
+MassMatrixOrder = 0
+
+Grid = Gmsh, &(PWD)grids/LENS-XX_sphere_v6_2D.msh
+//Grid = Gmsh2DQuad, &(PWD)grids/test.msh
+CharacteristicLength = 1.0
+GenGmshXOptions = 0.0, 1.0, 6, 71, 72
+GenGmshYOptions = 0.0, 1.0, 6, 3, 3
+
+Restart = On, &(PWD)Results/LENS-XX_Isothermal_Axi_v6_P5_penalty_Gupta/save/Iter306000.SAVE
+Stop = Iter, 10000000
+PostOrder = [&(Order)+1], 0
+Post = Iter, 0, -1, 1000
+Save = Iter, 0, -1, 1000
+MaxIter = 10000000
+
+rho_N2 = 8.8981E-4
+rho_O2 = 2.7019E-4
+rho_NO = 0.0
+rho_N = 0.0
+rho_O = 0.0
+T_tr = 535.0
+T_eev = 535.0
+velocity = 5732.0
+Twall = 300
+
+L_ref = 0.076
+rho_ref = 1.16E-3
+T_ref = 535.0
+v_ref = 5732.0
+
+Equation = NS2DNeq2Taxinondim, LLF
+Problem = FreeStream
+// ProblemInput = 2.0, 0.0
+ProblemInput = &(rho_N2), &(rho_O2), &(rho_NO), &(rho_N), &(rho_O), &(velocity), 0.0, &(T_tr), &(T_eev)
+// ProblemInput = &(rho_N2), &(rho_O2), &(rho_NO), &(rho_N), &(rho_O), 150, 150, &(T_tr), &(T_eev)
+Timescheme = Steady
+IncreaseCFL = 1000, 1.0, 1.0
+SteadyConvergenceTol = 1.0E-8
+Timestep = CFL, 0.1
+GMRES = 10, 1.0e-4, 1000
+TimeResolution = 11
+
+Limiter = None
+Sgain = 0.29
+Pgain = 0.0095
+Igain = 1.5
+Dgain = 0.000004
+Ducros = Off
+// ArtificialViscosity = SPID, &(Sgain), &(Pgain), &(Igain), &(Dgain), &(Ducros)
+PecletNumber = 4.0
+Kappa = 4.0
+// ArtificialViscosity = LaplacianP0All, &(PecletNumber), &(Kappa)
+// ArtificialViscosity = None
+Pressurefix = Off
+RollBack = 1, None, 0
+
+// ArtificialViscosity with shock fit
+MaxAV = 0.00005
+S0 = -6.0 // -6.0
+sigma = 0.02
+poly_order = 3
+update_period = -1
+eps = 0.03 // 0.03
+minPts = 7 // 7
+WallAV = 0.0001
+BlackoutR = 0.51
+ArtificialViscosity = LaplacianPolyShockFit, &(MaxAV), &(S0), &(sigma), &(poly_order), &(update_period), &(eps), &(minPts), &(BlackoutR)
+
+Gamma = 1.4
+Re = 200000 // negative value
+Ma = 1.5 // dummay
+Pr = 0.72 // dummay
+
+WallScale = 1.0
+BoundaryPenalty = 0.1
+// ViscousScaling = 1.0
+// BoundaryPenalty = 1.0
+
+// Bdry(3) = Farfield, Inflow
+// BdryInput(3) = &(rho_N2), &(rho_O2), &(rho_NO), &(rho_N), &(rho_O), &(velocity), 0.0, &(T_tr), &(T_eev)
+Bdry(3) = SupersonicInflow, Inflow
+BdryInput(3) = &(rho_N2), &(rho_O2), &(rho_NO), &(rho_N), &(rho_O), &(velocity), 0.0, &(T_tr), &(T_eev)
+// BdryInput(2) = &(Ma), 1.0, 1.0, 0.0
+// BdryInput(2) = 2.0, 1.0, 1.0, 0.0
+Bdry(4) = SupersonicOutflow, Outflow
+// Bdry(4) = BackPressure, Outflow
+BdryInput(4) = 1.0
+Bdry(5) = SlipWall, Slip
+BdryInput(5) = &(WallScale)
+Bdry(6) = AxiSymmetry, Symmetry
+Bdry(8) = IsothermalWall, Wall
+BdryInput(8) = &(WallScale), &(Twall)
+
+Matching = 70
+XPeriodic = 71, 72, 1.0
+YPeriodic = 81, 82, 1.0
+ZPeriodic = 91, 92, 6.283185308
+
