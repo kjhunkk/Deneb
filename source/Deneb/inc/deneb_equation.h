@@ -25,12 +25,12 @@
       std::vector<double>&flux_owner_grad_jacobi, \
       std::vector<double>&flux_neighbor_grad_jacobi
 #define ASSIGN_FLUX(equation, fluxtype)                        \
-  compute_numflux_ = &##equation## ::ComputeNumFlux##fluxtype; \
-  compute_numflux_jacobi_ = &##equation## ::ComputeNumFluxJacobi##fluxtype
+  compute_numflux_ = & equation ::ComputeNumFlux##fluxtype; \
+  compute_numflux_jacobi_ = & equation ::ComputeNumFluxJacobi##fluxtype
 #define DEFINE_FLUX(fluxtype)                                        \
-  virtual void ComputeNumFlux##fluxtype##(                           \
+  virtual void ComputeNumFlux##fluxtype(                           \
       const int num_points, std::vector<double>& flux, FACE_INPUTS); \
-  virtual void ComputeNumFluxJacobi##fluxtype##(                     \
+  virtual void ComputeNumFluxJacobi##fluxtype(                     \
       const int num_points, FACE_JACOBI_OUTPUTS, FACE_INPUTS)
 #define BOUNDARY_METHODS                                                    \
   virtual void ComputeBdrySolution(                                         \
@@ -64,6 +64,7 @@ class Equation {
  protected:
   int dimension_;
   int num_states_;
+  int num_species_;
   bool source_term_;
 
   std::vector<double> dt_auxiliary_;
@@ -81,13 +82,16 @@ class Equation {
 
   inline const int& GetDimension(void) const { return dimension_; };
   inline const int& GetNumStates(void) const { return num_states_; };
+  inline const int& GetNumSpecies(void) const { return num_species_; };
   inline bool GetSourceTerm(void) const { return source_term_; };
+  virtual inline bool GetMassMatrixFlag(void) const { return false; };
   inline const std::vector<std::string>& GetCellVariableNames(void) const {
     return cell_variable_names_;
   };
   inline const std::vector<std::string>& GetFaceVariableNames(void) const {
     return face_variable_names_;
   };
+  virtual inline bool GetAxisymmetricFlag(void) const { return false; }
 
   virtual void RegistBoundary(const std::vector<int>& bdry_tag) = 0;
   virtual void BuildData(void) = 0;
@@ -98,6 +102,12 @@ class Equation {
                             const double t) = 0;
   virtual void ComputeSystemMatrix(const double* solution, Mat& sysmat,
                                    const double t) = 0;
+  virtual void SystemMatrixShift(const double* solution, Mat& sysmat, 
+    const double dt, const double t) {
+    MatShift(sysmat, 1.0 / dt);
+  };
+  virtual void SystemMatrixShift(const double* solution, Mat& sysmat, 
+    const std::vector<double>& local_dt, const double t);
   virtual void GetCellPostSolution(const int icell, const int num_points,
                                    const std::vector<double>& solution,
                                    const std::vector<double>& solution_grad,
@@ -125,6 +135,9 @@ class Equation {
       const double* input_solution) const = 0;
   virtual const std::vector<double>& ComputePressureFixValues(
       const double* input_solution) = 0;
+  virtual void SolutionLimit(double* solution){};
+  virtual void GetPointPostSolution(const double* solution,
+                                    std::vector<double>& point_solution){};
 };
 extern std::shared_ptr<Equation> DENEB_EQUATION_NAME;
 }  // namespace deneb

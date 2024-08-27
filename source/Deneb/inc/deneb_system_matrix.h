@@ -9,6 +9,7 @@ class GMRES {
  private:
   KSP krylov_solver_;
   PC preconditioner_;
+  PetscErrorCode errorcode_;
 
  public:
   GMRES();
@@ -27,6 +28,8 @@ class GMRES {
     KSPGetConvergedReason(krylov_solver_, &reason);
     return static_cast<int>(reason);
   };
+  int GetErrorCode() { return static_cast<int>(errorcode_);
+  }
   void DoubleSearchDirection();
   void ResetSearchDirection();
 };

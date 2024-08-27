@@ -24,9 +24,10 @@ TimeschemeSteady::TimeschemeSteady() : Timescheme(true) {
   const int num_steps =
       std::stoi(config->GetConfigValue(CFL_INCREASE_INTERVAL));
   const double amount = std::stod(config->GetConfigValue(CFL_INCREASE_AMOUNT));
+  increase_max_ = std::stod(config->GetConfigValue(CFL_INCREASE_MAX));
   increase_amount_ = std::pow(amount, 1.0 / static_cast<double>(num_steps));
   MASTER_MESSAGE("CFL number increases " + std::to_string(amount) +
-                 " times at every " + std::to_string(num_steps) + " steps.\n");
+                 " times at every " + std::to_string(num_steps) + " steps until " + std::to_string(increase_max_) + "\n");
   MASTER_MESSAGE(
       "\t CFL multiply factor = " + std::to_string(increase_amount_) + "\n");
 
@@ -86,6 +87,7 @@ void TimeschemeSteady::BuildData(void) {
 void TimeschemeSteady::Marching(void) {
   MASTER_MESSAGE(avocado::GetTitle("TimeschemeSteady::Marching()"));
   DENEB_LIMITER->Limiting(&solution_[0]); 
+  DENEB_EQUATION->SolutionLimit(&solution_[0]); // for debug
   DENEB_ARTIFICIAL_VISCOSITY->ComputeArtificialViscosity(&solution_[0],
                                                          local_timestep_); 
   auto& config = AVOCADO_CONFIG;
@@ -132,6 +134,9 @@ void TimeschemeSteady::Marching(void) {
     is_save = save_.CheckTimeEvent(current_time_, time_step);
 
     ComputeLocalTimestep(solution, local_timestep_);
+    const double min_timestep = AVOCADO_MPI->Reduce(
+        *std::min_element(local_timestep_.begin(), local_timestep_.end()),
+        avocado::MPI::Op::MIN);
 
     // Updating solution
     DENEB_EQUATION->PreProcess(solution);
@@ -142,31 +147,29 @@ void TimeschemeSteady::Marching(void) {
     cblas_dscal(length_, -1.0, rhs_ptr, 1);
     VecRestoreArray(rhs_, &rhs_ptr);
     DENEB_EQUATION->ComputeSystemMatrix(solution, sysmat_, 0.0);
-    for (int icell = 0; icell < num_cells; icell++) {
-      memset(&block[0], 0, sb * sb * sizeof(double));
-      const double dt_factor = 1.0 / local_timestep_[icell];
-
-      for (int i = 0; i < sb * sb; i += (sb + 1)) block[i] = dt_factor;
-
-      MatSetValuesBlocked(sysmat_, 1, &mat_index[icell], 1, &mat_index[icell],
-                          &block[0], ADD_VALUES);
-    }
-    MatAssemblyBegin(sysmat_, MAT_FINAL_ASSEMBLY);
-    MatAssemblyEnd(sysmat_, MAT_FINAL_ASSEMBLY);
+    DENEB_EQUATION->SystemMatrixShift(solution, sysmat_, local_timestep_, 0.0);
 
     const int sub_iteration = solver_.Solve(sysmat_, rhs_, delta_);
+    const int errorcode = solver_.GetErrorCode();
 
     // Check divergence
     VecNorm(delta_, NORM_2, &delta_norm);
-    if ((!std::isnormal(delta_norm)) || (sub_iteration == 0)) {
-      MASTER_MESSAGE("GMRES diverged!\n");
+    if ((!std::isnormal(delta_norm)) || (errorcode != 0) ||
+        (!std::isnormal(min_timestep)) || (min_timestep < 0.0)) {
+      std::stringstream ss;
+      ss << std::scientific << std::setprecision(3);
+      ss << min_timestep;
+      MASTER_MESSAGE(
+          "GMRES diverged! PetscErrorCode : " + std::to_string(errorcode) +
+          " | min dt = " + ss.str() + "\n");
       is_stop = true;
     } else {
       VecGetArray(delta_, &delta_ptr);
       cblas_daxpy(length_, 1.0, delta_ptr, 1, &solution_[0], 1);
       VecRestoreArray(delta_, &delta_ptr);
-      DENEB_LIMITER->Limiting(&solution_[0]);     
-      DENEB_PRESSUREFIX->Execute(&solution_[0]);  
+      DENEB_LIMITER->Limiting(&solution_[0]);
+      DENEB_PRESSUREFIX->Execute(&solution_[0]);
+      DENEB_EQUATION->SolutionLimit(&solution_[0]);
 
       // Updating time and iteration
       current_time_ += time_step;
@@ -185,6 +188,8 @@ void TimeschemeSteady::Marching(void) {
       if (delta_norm > delta_norm_prev*1.01)
       timestep_control_value_ /= increase_amount_;
     }
+    if (timestep_control_value_ > increase_max_)
+      timestep_control_value_ = increase_max_;
     delta_norm_prev = delta_norm;
 
     // Printing message
@@ -242,5 +247,12 @@ void TimeschemeSteady::Marching(void) {
   DENEB_CONTOUR->CellSolution(
       dir + RETURN_POST_DIR + "Iter" + std::to_string(iteration_) + ".plt",
       &solution_[0], iteration_);
+  SaveLoad::SaveData data;
+  data.iteration_ = iteration_;
+  data.strandid_ = DENEB_CONTOUR->GetStrandID();
+  data.time_ = current_time_;
+  DENEB_SAVELOAD->Save(
+      dir + RETURN_SAVE_DIR + "Iter" + std::to_string(iteration_) + ".SAVE",
+      &solution_[0], data);
 }
 }  // namespace deneb

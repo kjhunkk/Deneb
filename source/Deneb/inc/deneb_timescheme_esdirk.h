@@ -31,6 +31,7 @@ class TimeschemeESDIRK : public Timescheme {
   int jacobi_recompute_max_iteration_;
   int shock_capturing_freeze_iteration_;
   double newton_relative_error_tol_;
+  double newton_absolute_error_tol_;
   double jacobi_recompute_tol_;
 
   std::vector<double> coeff_b_;

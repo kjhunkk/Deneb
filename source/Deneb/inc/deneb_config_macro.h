@@ -10,8 +10,10 @@
 #define ORDER "Order"
 #define VOLUME_FLUX_ORDER "FluxOrder.0"
 #define SURFACE_FLUX_ORDER "FluxOrder.1"
+#define MASS_MATRIX_ORDER "MassMatrixOrder.0"
 #define GRID_FILE_FORMAT "Grid.0"
 #define GRID_FILE_PATH "Grid.1"
+#define CHARACTERISTIC_LENGTH "CharacteristicLength.0"
 
 #define EQUATION "Equation.0"
 #define CONVECTIVE_FLUX "Equation.1"
@@ -26,6 +28,7 @@
 #define GMRES_MAX_ITERATION "GMRES.2"
 #define CFL_INCREASE_INTERVAL "IncreaseCFL.0"
 #define CFL_INCREASE_AMOUNT "IncreaseCFL.1"
+#define CFL_INCREASE_MAX "IncreaseCFL.2"
 #define STEADY_CONVERGENCE_TOL "SteadyConvergenceTol"
 
 #define RESTART "Restart.0"
@@ -42,8 +45,9 @@
 #define STOP_CONTROL_VALUE "Stop.1"
 #define MAX_ITERATION "MaxIter"
 
-#define NEWTON_ERROR_TOL "Newton.0"
-#define NEWTON_MAX_ITERATION "Newton.1"
+#define NEWTON_RELATIVE_ERROR_TOL "Newton.0"
+#define NEWTON_ABSOLUTE_ERROR_TOL "Newton.1"
+#define NEWTON_MAX_ITERATION "Newton.2"
 
 #define JACOBIAN_RECOMPUTE_TOL "JacobianRecompute.0"
 #define JACOBIAN_RECOMPUTE_ITERATION "JacobianRecompute.1"

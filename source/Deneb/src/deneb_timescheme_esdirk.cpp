@@ -70,7 +70,9 @@ void TimeschemeESDIRK::BuildData(void) {
     ERROR_MESSAGE(
         "Wrong roll back mechanism (no-exist): " + roll_back_mechanism + "\n");
   newton_relative_error_tol_ =
-      std::stod(config->GetConfigValue(NEWTON_ERROR_TOL));
+      std::stod(config->GetConfigValue(NEWTON_RELATIVE_ERROR_TOL));
+  newton_absolute_error_tol_ =
+      std::stod(config->GetConfigValue(NEWTON_ABSOLUTE_ERROR_TOL));
   max_newton_iteration_ =
       std::stoi(config->GetConfigValue(NEWTON_MAX_ITERATION));
 
@@ -120,6 +122,7 @@ void TimeschemeESDIRK::Marching(void) {
   const double* solution = &solution_[0];
   double *temp_rhs_ptr, *stage_solution_ptr, *stage_rhs_ptr;
   double relative_delta_norm = 1.0;
+  double delta_norm = 1.0;
   std::vector<double> pseudo_local_timestep(num_cells, 0.0);
   std::vector<double> pseudo_local_timestep_inv(num_cells, 0.0);
 
@@ -199,7 +202,7 @@ void TimeschemeESDIRK::Marching(void) {
       // Newton iteration
       relative_delta_norm = 1.0;
       int newton_iteration = 0;
-      double delta_norm = 0.0;
+      delta_norm = 1.0;
       double initial_delta_norm = 0.0;
       double convergence_rate = 0.0;
       double prev_delta_norm = 0.0;
@@ -300,12 +303,19 @@ void TimeschemeESDIRK::Marching(void) {
         VecAYPX(temp_delta_, -1.0, delta_);
         VecCopy(delta_, temp_delta_);
 
-
-
         newton_iteration++;
         jacobi_recompute_iteration++;
         // Solution update
         VecAXPY(stage_solution_, 1.0, delta_);
+
+        prev_delta_norm = delta_norm;
+        VecNorm(delta_, NORM_2, &delta_norm);
+        if (newton_iteration == 1) {
+          initial_delta_norm = delta_norm;
+          convergence_rate = 1.0;
+        } else
+          convergence_rate = delta_norm / prev_delta_norm;
+        relative_delta_norm = delta_norm / initial_delta_norm;
 
         // printmessage
         {
@@ -322,20 +332,15 @@ void TimeschemeESDIRK::Marching(void) {
              << pseudo_timestep_controller_->GetTimestepControlValue();
           ss << " |  Newton subiter=" << newton_iteration;
           ss << " |  GMRES subiter=" << sub_iteration;
-          ss << " |  delta norm=" << std::scientific << std::setprecision(3)
+          ss << " |  rel.delta=" << std::scientific << std::setprecision(3)
              << relative_delta_norm;
+          ss << " |  abs.delta=" << std::scientific << std::setprecision(3)
+             << delta_norm;
           MASTER_MESSAGE(ss.str() + "\n");
         }
 
-        prev_delta_norm = delta_norm;
-        VecNorm(delta_, NORM_2, &delta_norm);
-        if (newton_iteration == 1) {
-          initial_delta_norm = delta_norm;
-          convergence_rate = 1.0;
-        } else
-          convergence_rate = delta_norm / prev_delta_norm;
-        relative_delta_norm = delta_norm / initial_delta_norm;
         if (relative_delta_norm < newton_relative_error_tol_) break;
+        if (delta_norm < newton_absolute_error_tol_) break;
       }
       sum_newton_iteration += newton_iteration;
     }
@@ -380,8 +385,10 @@ void TimeschemeESDIRK::Marching(void) {
       ss << " |  GMRES avg subiter="
          << static_cast<double>(sum_sub_iteration[1]) /
                 static_cast<double>(sum_sub_iteration[0]);
-      ss << " |  delta norm=" << std::scientific << std::setprecision(3)
+      ss << " |  rel.delta=" << std::scientific << std::setprecision(3)
          << relative_delta_norm;
+      ss << " |  abs.delta=" << std::scientific << std::setprecision(3)
+         << delta_norm;
       MASTER_MESSAGE(ss.str() + "\n");
     }
 

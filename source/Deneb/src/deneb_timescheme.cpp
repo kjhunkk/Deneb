@@ -12,6 +12,7 @@
 #include "deneb_timescheme_ssprk.h"
 #include "deneb_timescheme_steady.h"
 #include "deneb_timescheme_esdirk.h"
+#include "deneb_timescheme_sdirk.h"
 
 namespace deneb {
 bool Interrupt::CheckIterationFinish(const int iteration) {
@@ -77,12 +78,18 @@ std::shared_ptr<Timescheme> Timescheme::GetTimescheme(const std::string& name) {
     return std::make_shared<TimeschemeRODAS5>();
   else if (!name.compare("ROW6A") || !name.compare("ROSEN66"))
     return std::make_shared<TimeschemeROW6A>();
-  else if (!name.compare("ESDIRK3") || !name.compare("ESDIRK3"))
+  else if (!name.compare("ESDIRK3"))
     return std::make_shared<TimeschemeESDIRK3>();
-  else if (!name.compare("ESDIRK4") || !name.compare("ESDIRK4"))
+  else if (!name.compare("ESDIRK4"))
     return std::make_shared<TimeschemeESDIRK4>();
-  else if (!name.compare("Steady")) 
+  else if (!name.compare("Steady"))
     return std::make_shared<TimeschemeSteady>();
+  else if (!name.compare("SDIRK22") || !name.compare("SDIRK2"))
+    return std::make_shared<TimeschemeSDIRK22>();
+  else if (!name.compare("SDIRK32") || !name.compare("SDIRK3"))
+    return std::make_shared<TimeschemeSDIRK32>();
+  else if (!name.compare("SDIRK43") || !name.compare("SDIRK4"))
+    return std::make_shared<TimeschemeSDIRK43>();
   ERROR_MESSAGE("Wrong time scheme (no-exist):" + name + "\n");
   return nullptr;
 }

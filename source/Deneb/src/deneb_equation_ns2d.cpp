@@ -136,6 +136,7 @@ EquationNS2D::EquationNS2D() : ConstantsNS2D(), Equation(D_, S_, false) {
   MASTER_MESSAGE("Number of state variables = " + std::to_string(S_) + "\n");
   MASTER_MESSAGE(
       "Source term = " + std::string(source_term_ ? "true" : "false") + "\n");
+  num_species_ = 1;
 
   auto& config = AVOCADO_CONFIG;
   problem_ = ProblemNS2D::GetProblem(config->GetConfigValue(PROBLEM));
@@ -2381,13 +2382,10 @@ void SupersonicInflowBdryNS2D::ComputeBdryFluxJacobi(
 BackPressureBdryNS2D::BackPressureBdryNS2D(const int bdry_tag,
                                               EquationNS2D* equation)
     : BoundaryNS2D(bdry_tag, equation) {
-  MASTER_MESSAGE("BackPressure boundary (tag=" + std::to_string(bdry_tag) +
-                 ")\n");
-
   auto& config = AVOCADO_CONFIG;
   p_over_pinf_ = std::stod(config->GetConfigValue(BDRY_INPUT_I(bdry_tag, 0)));
 
-  MASTER_MESSAGE("SupersonicInflow (tag=" + std::to_string(bdry_tag) +
+  MASTER_MESSAGE("BackPressure boundary (tag=" + std::to_string(bdry_tag) +
                  ")\n\tp/pinf = " + std::to_string(p_over_pinf_) + "\n");
 }
 void BackPressureBdryNS2D::ComputeBdrySolution(

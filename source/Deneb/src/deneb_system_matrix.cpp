@@ -132,8 +132,9 @@ void GMRES::Initialize(const Mat& mat) {
 }
 int GMRES::Solve(const Mat& A, const Vec& b, Vec& solution) {
   KSPSetOperators(krylov_solver_, A, A);
-  KSPSolve(krylov_solver_, b, solution);
+  errorcode_ = KSPSolve(krylov_solver_, b, solution);
   return GetIterationNumber();
+  //return errorcode;
 }
 void GMRES::DoubleSearchDirection() {
   const auto& config = AVOCADO_CONFIG;

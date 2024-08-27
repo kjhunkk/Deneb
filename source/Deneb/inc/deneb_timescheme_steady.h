@@ -15,6 +15,7 @@ class TimeschemeSteady : public Timescheme {
 
   // Options to increase CFL 
   double increase_amount_;
+  double increase_max_;
   double steady_stop_residual_;
 
  public:

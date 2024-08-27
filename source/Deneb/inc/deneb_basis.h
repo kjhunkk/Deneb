@@ -15,7 +15,7 @@ class Basis {
       const ElemType elemtype, std::shared_ptr<Polynomial> polynomial);
 
  protected:
-  static const int iteration_ = 3;
+  static const int iteration_ = 10;
   ElemType elemtype_;
   int dimension_;
 

@@ -1041,9 +1041,9 @@ void hMLP_BD::VertexMinMax(const double* solution_ptr) {
       DENEB_DATA->GetFaceNeighborCell();
   static const std::vector<double>& face_area = DENEB_DATA->GetFaceArea();
   static const std::vector<std::vector<double>>& face_owner_basis_value =
-      DENEB_DATA->GetFaceOwnerBasisValue();
+      DENEB_DATA->GetFaceQuadOwnerBasisValue();
   static const std::vector<std::vector<double>>& face_neighbor_basis_value =
-      DENEB_DATA->GetFaceNeighborBasisValue();
+      DENEB_DATA->GetFaceQuadNeighborBasisValue();
   static const std::vector<std::vector<double>>& face_quad_weights =
       DENEB_DATA->GetFaceQuadWeights();
   std::vector<std::vector<double>> face_difference(num_states);

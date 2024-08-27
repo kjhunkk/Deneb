@@ -27,7 +27,9 @@ class Data {
   int num_bases_;
 
   int dimension_;
+  double lc_; // characteristic length
   bool has_source_term_;
+  bool has_mass_matrix_;
 
   // node
   int num_global_nodes_;
@@ -61,6 +63,7 @@ class Data {
   std::vector<std::vector<double>> cell_basis_grad_value_;
   std::vector<std::vector<double>> cell_coefficients_;
   std::vector<std::vector<double>> cell_source_coefficients_;
+  std::vector<std::vector<double>> cell_mass_coefficients_;
 
   // face
   int num_faces_;
@@ -172,6 +175,15 @@ class Data {
   template <typename T>
   void SplitData(std::vector<T>& A, std::vector<T>& B,
                    const std::vector<int>& rules);
+  double calMinimumDist2(std::shared_ptr<Jacobian>& wbdry_jacobian,
+                         const double* x);
+
+  inline double calDist2(const double* x, const double* y) const {
+    double result = 0.0;
+    for (int idim = 0; idim < dimension_; idim++)
+      result += (x[idim] - y[idim]) * (x[idim] - y[idim]);
+    return result;
+  };
 
  public:
   void BuildData(void);
@@ -195,6 +207,9 @@ class Data {
                              std::vector<double>& phy_coords) const;
   void GetFaceCoords(const int icell, const int face_type,
                      std::vector<double>& coords) const;
+  void calWallDistance(const bool finalize, const int num_query_points,
+                       std::vector<double>& wall_distance,
+                       const std::vector<double>& query_points);
 
   inline const std::unordered_map<int, std::vector<int>>&
   GetPeriodicMatchingGlobalNodeIndex(void) const {
@@ -287,6 +302,10 @@ class Data {
   inline const std::vector<std::vector<double>>& GetCellSourceCoefficients()
       const {
     return cell_source_coefficients_;
+  };
+  inline const std::vector<std::vector<double>>& GetCellMassCoefficients()
+      const {
+    return cell_mass_coefficients_;
   };
 
   // face
